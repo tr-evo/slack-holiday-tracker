@@ -43,7 +43,7 @@ export function buildMainMenuModal(lang: string, isAdmin: boolean) {
     elements: [
       {
         type: "button",
-        text: { type: "plain_text", text: `${t("menu.language", lang)}: ${lang === "en" ? "Deutsch" : "English"}` },
+        text: { type: "plain_text", text: lang === "en" ? "Auf Deutsch wechseln" : "Switch to English" },
         action_id: "toggle_language",
       },
     ],

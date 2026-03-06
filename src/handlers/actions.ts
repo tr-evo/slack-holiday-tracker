@@ -87,7 +87,7 @@ export function registerActionHandlers(app: App) {
     });
   });
 
-  // Menu: show balance (from modal button — post as DM since we can't do ephemeral from modal)
+  // Menu: show balance (push modal view)
   app.action("show_balance", async ({ ack, body, client }) => {
     await ack();
     const db = getDb();
@@ -104,18 +104,30 @@ export function registerActionHandlers(app: App) {
     const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays);
     const used = user.annualAllowance - remaining;
 
-    await client.chat.postMessage({
-      channel: user.slackId,
-      text: [
-        `*${t("balance.title", user.language)}*`,
-        t("balance.total", user.language, { days: String(user.annualAllowance) }),
-        t("balance.used", user.language, { days: String(used) }),
-        t("balance.remaining", user.language, { days: String(remaining) }),
-      ].join("\n"),
+    await client.views.push({
+      trigger_id: (body as any).trigger_id,
+      view: {
+        type: "modal",
+        title: { type: "plain_text", text: t("balance.title", user.language) },
+        close: { type: "plain_text", text: "Back" },
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: [
+                t("balance.total", user.language, { days: String(user.annualAllowance) }),
+                t("balance.used", user.language, { days: String(used) }),
+                `*${t("balance.remaining", user.language, { days: String(remaining) })}*`,
+              ].join("\n"),
+            },
+          },
+        ],
+      },
     });
   });
 
-  // Menu: show list (from modal button — post as DM)
+  // Menu: show list (push modal view)
   app.action("show_list", async ({ ack, body, client }) => {
     await ack();
     const db = getDb();
@@ -127,26 +139,39 @@ export function registerActionHandlers(app: App) {
 
     const requests = requestRepo.listByUser(user.slackId);
 
+    const blocks: any[] = [];
+
     if (requests.length === 0) {
-      await client.chat.postMessage({
-        channel: user.slackId,
-        text: t("list.empty", user.language),
+      blocks.push({
+        type: "section",
+        text: { type: "mrkdwn", text: t("list.empty", user.language) },
       });
-      return;
+    } else {
+      for (const r of requests) {
+        const status = t(`list.status.${r.status}`, user.language);
+        const halfDayInfo = [
+          r.halfDayStart ? `(${t("request.half_day_start", user.language)})` : "",
+          r.halfDayEnd ? `(${t("request.half_day_end", user.language)})` : "",
+        ].filter(Boolean).join(" ");
+        blocks.push({
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `${r.startDate} → ${r.endDate} ${halfDayInfo}\n*${status}*`,
+          },
+        });
+        blocks.push({ type: "divider" });
+      }
     }
 
-    const lines = requests.map((r) => {
-      const status = t(`list.status.${r.status}`, user.language);
-      const halfDayInfo = [
-        r.halfDayStart ? `(${t("request.half_day_start", user.language)})` : "",
-        r.halfDayEnd ? `(${t("request.half_day_end", user.language)})` : "",
-      ].filter(Boolean).join(" ");
-      return `• ${r.startDate} → ${r.endDate} ${halfDayInfo} — *${status}*`;
-    });
-
-    await client.chat.postMessage({
-      channel: user.slackId,
-      text: `*${t("list.title", user.language)}*\n${lines.join("\n")}`,
+    await client.views.push({
+      trigger_id: (body as any).trigger_id,
+      view: {
+        type: "modal",
+        title: { type: "plain_text", text: t("list.title", user.language) },
+        close: { type: "plain_text", text: "Back" },
+        blocks,
+      },
     });
   });
 

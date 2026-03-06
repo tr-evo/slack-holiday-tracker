@@ -4,6 +4,7 @@ import { getDb } from "./db/connection.js";
 import { registerHolidayHandlers } from "./handlers/holiday.js";
 import { registerActionHandlers } from "./handlers/actions.js";
 import { registerSubmissionHandlers } from "./handlers/submissions.js";
+import { registerAdminHandlers } from "./handlers/admin.js";
 
 // Initialize database on startup
 getDb();
@@ -18,6 +19,7 @@ const app = new App({
 registerHolidayHandlers(app);
 registerActionHandlers(app);
 registerSubmissionHandlers(app);
+registerAdminHandlers(app);
 
 (async () => {
   await app.start();
