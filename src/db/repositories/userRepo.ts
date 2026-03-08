@@ -31,10 +31,11 @@ function rowToUser(row: any): User {
 export function createUserRepo(db: Database.Database): UserRepo {
   return {
     upsert({ slackId, name }) {
+      const defaultAllowance = Number(process.env.DEFAULT_ALLOWANCE) || 30;
       db.prepare(
-        `INSERT INTO users (slack_id, name) VALUES (?, ?)
+        `INSERT INTO users (slack_id, name, annual_allowance) VALUES (?, ?, ?)
          ON CONFLICT(slack_id) DO UPDATE SET name = excluded.name`
-      ).run(slackId, name);
+      ).run(slackId, name, defaultAllowance);
     },
 
     findById(slackId) {
