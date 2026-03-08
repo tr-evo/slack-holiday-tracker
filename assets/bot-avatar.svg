@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#43cea2"/>
+      <stop offset="100%" stop-color="#185a9d"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffecd2"/>
+      <stop offset="100%" stop-color="#fcb69f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="256" fill="url(#sky)"/>
+
+  <!-- Sun -->
+  <circle cx="350" cy="130" r="60" fill="url(#sun)" opacity="0.9"/>
+  <!-- Sun rays -->
+  <g stroke="#fcb69f" stroke-width="4" stroke-linecap="round" opacity="0.6">
+    <line x1="350" y1="55" x2="350" y2="40"/>
+    <line x1="350" y1="220" x2="350" y2="205"/>
+    <line x1="275" y1="130" x2="260" y2="130"/>
+    <line x1="440" y1="130" x2="425" y2="130"/>
+    <line x1="297" y1="77" x2="286" y2="66"/>
+    <line x1="403" y1="183" x2="414" y2="194"/>
+    <line x1="297" y1="183" x2="286" y2="194"/>
+    <line x1="403" y1="77" x2="414" y2="66"/>
+  </g>
+
+  <!-- Palm tree trunk -->
+  <path d="M155 400 Q165 300 175 220 Q178 195 170 190" fill="none" stroke="#8B6914" stroke-width="16" stroke-linecap="round"/>
+
+  <!-- Palm leaves -->
+  <g fill="#2d8a4e">
+    <path d="M170 195 Q120 150 60 160 Q120 170 155 195Z" opacity="0.8"/>
+    <path d="M170 190 Q140 120 100 100 Q145 135 165 185Z" opacity="0.9"/>
+    <path d="M170 190 Q200 120 260 110 Q210 135 175 185Z" opacity="0.85"/>
+    <path d="M172 195 Q230 155 280 165 Q225 168 178 195Z" opacity="0.75"/>
+    <path d="M168 192 Q160 130 180 80 Q175 135 170 188Z" opacity="0.7"/>
+  </g>
+
+  <!-- Calendar page -->
+  <rect x="240" y="260" width="170" height="150" rx="12" fill="white" opacity="0.95"/>
+  <!-- Calendar header -->
+  <rect x="240" y="260" width="170" height="40" rx="12" fill="#e74c3c"/>
+  <rect x="240" y="285" width="170" height="15" fill="#e74c3c"/>
+  <!-- Calendar rings -->
+  <rect x="275" y="250" width="8" height="24" rx="4" fill="#bdc3c7"/>
+  <rect x="367" y="250" width="8" height="24" rx="4" fill="#bdc3c7"/>
+  <!-- Month text -->
+  <text x="325" y="287" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="white" text-anchor="middle">URLAUB</text>
+  <!-- Checkmark -->
+  <path d="M295 345 L315 370 L365 320" fill="none" stroke="#43cea2" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Sparkles -->
+  <g fill="#ffecd2" opacity="0.7">
+    <polygon points="100,280 105,290 115,290 107,297 110,307 100,300 90,307 93,297 85,290 95,290"/>
+    <polygon points="430,240 433,247 440,247 435,252 437,259 430,254 423,259 425,252 420,247 427,247" transform="scale(0.8) translate(90,50)"/>
+  </g>
+</svg>

@@ -38,5 +38,16 @@
   "admin.pending_requests": "Offene Anträge",
   "admin.not_admin": "Du hast keine Admin-Berechtigungen",
   "language.changed": "Sprache auf Deutsch geändert",
+  "admin.no_pending": "Keine offenen Anträge",
+  "admin.add_past_holiday": "Vergangenen Urlaub nachtragen",
+  "admin.add_past_holiday_desc": "Einen Urlaub eintragen, der vor Einführung dieses Tools genommen wurde",
+  "admin.past_holiday_added": "Vergangener Urlaub für <@{user}> eingetragen ({start} bis {end})",
+  "admin.import_holidays": "Feiertage importieren",
+  "admin.import_holidays_submit": "Importieren",
+  "admin.import_holidays_desc": "Gesetzliche Feiertage eines Bundeslandes automatisch laden",
+  "admin.select_bundesland": "Bundesland wählen",
+  "admin.bundesland": "Bundesland",
+  "admin.year": "Jahr",
+  "admin.holidays_imported": "{count} Feiertage für {land} ({year}) importiert",
   "error.generic": "Etwas ist schiefgelaufen. Bitte versuche es erneut."
 }

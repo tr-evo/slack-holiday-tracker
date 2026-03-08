@@ -13,7 +13,7 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
   if (pendingRequests.length === 0) {
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: "_No pending requests_" },
+      text: { type: "mrkdwn", text: `_${t("admin.no_pending", lang)}_` },
     });
   } else {
     for (const req of pendingRequests) {
@@ -35,6 +35,23 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
     }
   }
 
+  // Action buttons
+  blocks.push({
+    type: "actions",
+    elements: [
+      {
+        type: "button",
+        text: { type: "plain_text", text: t("admin.add_past_holiday", lang) },
+        action_id: "open_add_past_holiday",
+      },
+      {
+        type: "button",
+        text: { type: "plain_text", text: t("admin.import_holidays", lang) },
+        action_id: "open_import_holidays",
+      },
+    ],
+  });
+
   blocks.push({ type: "divider" });
 
   // User management section
@@ -47,9 +64,10 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
     type: "input",
     block_id: "user_select_block",
     element: {
-      type: "users_select",
+      type: "external_select",
       action_id: "admin_user_select",
       placeholder: { type: "plain_text", text: "Select a user" },
+      min_query_length: 0,
     },
     label: { type: "plain_text", text: "User" },
   });
@@ -80,9 +98,10 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
     type: "input",
     block_id: "admin_toggle_user_block",
     element: {
-      type: "users_select",
+      type: "external_select",
       action_id: "admin_toggle_user_select",
       placeholder: { type: "plain_text", text: "Select a user" },
+      min_query_length: 0,
     },
     label: { type: "plain_text", text: "User" },
   });

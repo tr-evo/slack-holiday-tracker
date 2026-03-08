@@ -38,6 +38,17 @@
   "admin.pending_requests": "Pending Requests",
   "admin.not_admin": "You don't have admin permissions",
   "language.changed": "Language changed to English",
+  "admin.no_pending": "No pending requests",
+  "admin.add_past_holiday": "Add Past Holiday",
+  "admin.add_past_holiday_desc": "Record a holiday that was taken before this tool was introduced",
+  "admin.past_holiday_added": "Past holiday recorded for <@{user}> ({start} to {end})",
+  "admin.import_holidays": "Import Public Holidays",
+  "admin.import_holidays_submit": "Import",
+  "admin.import_holidays_desc": "Automatically load public holidays for a German federal state",
+  "admin.select_bundesland": "Select state",
+  "admin.bundesland": "Federal State",
+  "admin.year": "Year",
+  "admin.holidays_imported": "{count} public holidays imported for {land} ({year})",
   "error.generic": "Something went wrong. Please try again.",
   "__test_only_en__": "test"
 }
