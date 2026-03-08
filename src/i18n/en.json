@@ -35,6 +35,7 @@
   "admin.title": "Admin Panel",
   "admin.set_allowance": "Set Allowance",
   "admin.toggle_admin": "Toggle Admin",
+  "admin.submit": "Save",
   "admin.pending_requests": "Pending Requests",
   "admin.not_admin": "You don't have admin permissions",
   "language.changed": "Language changed to English",

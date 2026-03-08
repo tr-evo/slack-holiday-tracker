@@ -35,6 +35,7 @@
   "admin.title": "Admin-Bereich",
   "admin.set_allowance": "Urlaubstage festlegen",
   "admin.toggle_admin": "Admin umschalten",
+  "admin.submit": "Speichern",
   "admin.pending_requests": "Offene Anträge",
   "admin.not_admin": "Du hast keine Admin-Berechtigungen",
   "language.changed": "Sprache auf Deutsch geändert",

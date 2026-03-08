@@ -63,6 +63,7 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
   blocks.push({
     type: "input",
     block_id: "user_select_block",
+    optional: true,
     element: {
       type: "external_select",
       action_id: "admin_user_select",
@@ -75,6 +76,7 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
   blocks.push({
     type: "input",
     block_id: "allowance_block",
+    optional: true,
     element: {
       type: "number_input",
       action_id: "admin_allowance",
@@ -97,6 +99,7 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
   blocks.push({
     type: "input",
     block_id: "admin_toggle_user_block",
+    optional: true,
     element: {
       type: "external_select",
       action_id: "admin_toggle_user_select",
@@ -110,7 +113,7 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
     type: "modal" as const,
     callback_id: "admin_panel_submit",
     title: { type: "plain_text" as const, text: t("admin.title", lang) },
-    submit: { type: "plain_text" as const, text: t("admin.set_allowance", lang) },
+    submit: { type: "plain_text" as const, text: t("admin.submit", lang) },
     close: { type: "plain_text" as const, text: "Back" },
     blocks,
   };
