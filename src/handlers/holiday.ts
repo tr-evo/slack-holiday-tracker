@@ -39,9 +39,8 @@ export function registerHolidayHandlers(app: App) {
       const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays);
       const used = user.annualAllowance - remaining;
 
-      await client.chat.postEphemeral({
-        channel: command.channel_id,
-        user: command.user_id,
+      await client.chat.postMessage({
+        channel: command.user_id,
         text: [
           `*${t("balance.title", user.language)}*`,
           t("balance.total", user.language, { days: String(user.annualAllowance) }),
@@ -58,9 +57,8 @@ export function registerHolidayHandlers(app: App) {
       const requests = requestRepo.listByUser(user.slackId);
 
       if (requests.length === 0) {
-        await client.chat.postEphemeral({
-          channel: command.channel_id,
-          user: command.user_id,
+        await client.chat.postMessage({
+          channel: command.user_id,
           text: t("list.empty", user.language),
         });
         return;
@@ -75,10 +73,35 @@ export function registerHolidayHandlers(app: App) {
         return `• ${r.startDate} → ${r.endDate} ${halfDayInfo} — *${status}*`;
       });
 
-      await client.chat.postEphemeral({
-        channel: command.channel_id,
-        user: command.user_id,
+      await client.chat.postMessage({
+        channel: command.user_id,
         text: `*${t("list.title", user.language)}*\n${lines.join("\n")}`,
+      });
+      return;
+    }
+
+    if (subcommand === "holidays") {
+      const db = getDb();
+      const publicHolidayRepo = createPublicHolidayRepo(db);
+      const year = new Date().getFullYear();
+      const holidays = publicHolidayRepo.getForYear(year);
+
+      if (holidays.length === 0) {
+        await client.chat.postMessage({
+          channel: command.user_id,
+          text: t("holidays.empty", user.language, { year: String(year) }),
+        });
+        return;
+      }
+
+      const lines = holidays.map((h) => {
+        const name = user.language === "de" ? h.nameDe : h.name;
+        return `• ${h.date} — ${name}`;
+      });
+
+      await client.chat.postMessage({
+        channel: command.user_id,
+        text: `*${t("holidays.title", user.language, { year: String(year) })}*\n${lines.join("\n")}`,
       });
       return;
     }

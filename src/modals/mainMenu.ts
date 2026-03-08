@@ -21,6 +21,11 @@ export function buildMainMenuModal(lang: string, isAdmin: boolean) {
           text: { type: "plain_text", text: t("menu.list", lang) },
           action_id: "show_list",
         },
+        {
+          type: "button",
+          text: { type: "plain_text", text: t("menu.holidays", lang) },
+          action_id: "show_holidays",
+        },
       ],
     },
   ];

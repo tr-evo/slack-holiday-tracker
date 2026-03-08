@@ -175,6 +175,47 @@ export function registerActionHandlers(app: App) {
     });
   });
 
+  // Menu: show public holidays (push modal view)
+  app.action("show_holidays", async ({ ack, body, client }) => {
+    await ack();
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const publicHolidayRepo = createPublicHolidayRepo(db);
+
+    const user = userRepo.findById(body.user.id);
+    if (!user) return;
+
+    const year = new Date().getFullYear();
+    const holidays = publicHolidayRepo.getForYear(year);
+
+    const blocks: any[] = [];
+
+    if (holidays.length === 0) {
+      blocks.push({
+        type: "section",
+        text: { type: "mrkdwn", text: t("holidays.empty", user.language, { year: String(year) }) },
+      });
+    } else {
+      for (const h of holidays) {
+        const name = user.language === "de" ? h.nameDe : h.name;
+        blocks.push({
+          type: "section",
+          text: { type: "mrkdwn", text: `*${h.date}* — ${name}` },
+        });
+      }
+    }
+
+    await client.views.push({
+      trigger_id: (body as any).trigger_id,
+      view: {
+        type: "modal",
+        title: { type: "plain_text", text: t("holidays.title", user.language, { year: String(year) }) },
+        close: { type: "plain_text", text: "Back" },
+        blocks,
+      },
+    });
+  });
+
   // Menu: toggle language
   app.action("toggle_language", async ({ ack, body, client }) => {
     await ack();
