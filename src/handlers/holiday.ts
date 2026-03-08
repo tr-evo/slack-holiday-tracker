@@ -70,7 +70,8 @@ export function registerHolidayHandlers(app: App) {
           r.halfDayStart ? `(${t("request.half_day_start", user.language)})` : "",
           r.halfDayEnd ? `(${t("request.half_day_end", user.language)})` : "",
         ].filter(Boolean).join(" ");
-        return `• ${r.startDate} → ${r.endDate} ${halfDayInfo} — *${status}*`;
+        const reason = r.reason ? ` — _${r.reason}_` : "";
+        return `• ${r.startDate} → ${r.endDate} ${halfDayInfo} — *${status}*${reason}`;
       });
 
       await sendDM(client, userId, `*${t("list.title", user.language)}*\n${lines.join("\n")}`);

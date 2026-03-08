@@ -157,7 +157,7 @@ export function registerActionHandlers(app: App) {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `${r.startDate} → ${r.endDate} ${halfDayInfo}\n*${status}*`,
+            text: `${r.startDate} → ${r.endDate} ${halfDayInfo}\n*${status}*${r.reason ? `\n> ${r.reason}` : ""}`,
           },
         });
         blocks.push({ type: "divider" });
