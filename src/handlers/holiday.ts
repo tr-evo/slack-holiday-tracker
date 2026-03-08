@@ -15,6 +15,11 @@ function ensureUser(slackId: string, name: string) {
   return userRepo.findById(slackId)!;
 }
 
+async function dmUser(client: any, userId: string, text: string) {
+  const { channel } = await client.conversations.open({ users: userId });
+  await client.chat.postMessage({ channel: channel.id, text });
+}
+
 export function registerHolidayHandlers(app: App) {
   app.command("/holiday", async ({ command, ack, client }) => {
     await ack();
@@ -39,15 +44,12 @@ export function registerHolidayHandlers(app: App) {
       const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays);
       const used = user.annualAllowance - remaining;
 
-      await client.chat.postMessage({
-        channel: command.user_id,
-        text: [
-          `*${t("balance.title", user.language)}*`,
-          t("balance.total", user.language, { days: String(user.annualAllowance) }),
-          t("balance.used", user.language, { days: String(used) }),
-          t("balance.remaining", user.language, { days: String(remaining) }),
-        ].join("\n"),
-      });
+      await dmUser(client, command.user_id, [
+        `*${t("balance.title", user.language)}*`,
+        t("balance.total", user.language, { days: String(user.annualAllowance) }),
+        t("balance.used", user.language, { days: String(used) }),
+        t("balance.remaining", user.language, { days: String(remaining) }),
+      ].join("\n"));
       return;
     }
 
@@ -57,10 +59,7 @@ export function registerHolidayHandlers(app: App) {
       const requests = requestRepo.listByUser(user.slackId);
 
       if (requests.length === 0) {
-        await client.chat.postMessage({
-          channel: command.user_id,
-          text: t("list.empty", user.language),
-        });
+        await dmUser(client, command.user_id, t("list.empty", user.language));
         return;
       }
 
@@ -73,24 +72,18 @@ export function registerHolidayHandlers(app: App) {
         return `• ${r.startDate} → ${r.endDate} ${halfDayInfo} — *${status}*`;
       });
 
-      await client.chat.postMessage({
-        channel: command.user_id,
-        text: `*${t("list.title", user.language)}*\n${lines.join("\n")}`,
-      });
+      await dmUser(client, command.user_id, `*${t("list.title", user.language)}*\n${lines.join("\n")}`);
       return;
     }
 
-    if (subcommand === "holidays") {
+    if (subcommand === "holidays" || subcommand === "holiday") {
       const db = getDb();
       const publicHolidayRepo = createPublicHolidayRepo(db);
       const year = new Date().getFullYear();
       const holidays = publicHolidayRepo.getForYear(year);
 
       if (holidays.length === 0) {
-        await client.chat.postMessage({
-          channel: command.user_id,
-          text: t("holidays.empty", user.language, { year: String(year) }),
-        });
+        await dmUser(client, command.user_id, t("holidays.empty", user.language, { year: String(year) }));
         return;
       }
 
@@ -99,10 +92,7 @@ export function registerHolidayHandlers(app: App) {
         return `• ${h.date} — ${name}`;
       });
 
-      await client.chat.postMessage({
-        channel: command.user_id,
-        text: `*${t("holidays.title", user.language, { year: String(year) })}*\n${lines.join("\n")}`,
-      });
+      await dmUser(client, command.user_id, `*${t("holidays.title", user.language, { year: String(year) })}*\n${lines.join("\n")}`);
       return;
     }
 
