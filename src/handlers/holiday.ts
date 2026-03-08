@@ -76,7 +76,7 @@ export function registerHolidayHandlers(app: App) {
       return;
     }
 
-    if (subcommand === "holidays" || subcommand === "holiday") {
+    if (subcommand === "public") {
       const db = getDb();
       const publicHolidayRepo = createPublicHolidayRepo(db);
       const year = new Date().getFullYear();
