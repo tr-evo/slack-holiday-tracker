@@ -6,6 +6,7 @@ import { buildAdminPanelModal } from "../modals/adminPanel.js";
 import { buildPastHolidayModal } from "../modals/pastHolidayModal.js";
 import { buildImportHolidaysModal } from "../modals/importHolidaysModal.js";
 import { seedPublicHolidays, BUNDESLAENDER } from "../services/publicHolidays.js";
+import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { t } from "../i18n/t.js";
 
 async function fetchWorkspaceMembers(client: any): Promise<{ id: string; name: string }[]> {
@@ -13,6 +14,14 @@ async function fetchWorkspaceMembers(client: any): Promise<{ id: string; name: s
   return (result.members ?? [])
     .filter((m: any) => !m.is_bot && m.id !== "USLACKBOT" && !m.deleted && !m.is_restricted && !m.is_ultra_restricted)
     .map((m: any) => ({ id: m.id, name: m.real_name || m.name }));
+}
+
+function getCarryoverSettings(db: any) {
+  const settingsRepo = createSettingsRepo(db);
+  return {
+    enabled: settingsRepo.isCarryoverEnabled(),
+    cutoff: settingsRepo.getCarryoverCutoff(),
+  };
 }
 
 export function registerAdminHandlers(app: App) {
@@ -46,7 +55,7 @@ export function registerAdminHandlers(app: App) {
 
     await client.views.push({
       trigger_id: (body as any).trigger_id,
-      view: buildAdminPanelModal(user.language, pending),
+      view: buildAdminPanelModal(user.language, pending, getCarryoverSettings(db)),
     });
   });
 
@@ -69,6 +78,19 @@ export function registerAdminHandlers(app: App) {
     if (selectedUserId && newAllowance) {
       userRepo.upsert({ slackId: selectedUserId, name: selectedUserId });
       userRepo.setAllowance(selectedUserId, Number(newAllowance));
+    }
+
+    // Handle carryover days for selected user
+    const carryoverDays = values.carryover_days_block?.admin_carryover_days?.value;
+    if (selectedUserId && carryoverDays != null) {
+      userRepo.setCarryoverDays(selectedUserId, Number(carryoverDays));
+    }
+
+    // Handle carryover cutoff setting
+    const cutoffValue = values.carryover_cutoff_block?.carryover_cutoff?.value;
+    if (cutoffValue) {
+      const settingsRepo = createSettingsRepo(db);
+      settingsRepo.set("carryover_cutoff", cutoffValue);
     }
 
     // Handle toggle admin
@@ -128,7 +150,31 @@ export function registerAdminHandlers(app: App) {
     if (viewId) {
       await client.views.update({
         view_id: viewId,
-        view: buildAdminPanelModal(admin.language, updatedPending),
+        view: buildAdminPanelModal(admin.language, updatedPending, getCarryoverSettings(db)),
+      });
+    }
+  });
+
+  // Toggle carryover setting
+  app.action("toggle_carryover", async ({ ack, body, client }) => {
+    await ack();
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const requestRepo = createRequestRepo(db);
+    const settingsRepo = createSettingsRepo(db);
+
+    const admin = userRepo.findById(body.user.id);
+    if (!admin?.isAdmin) return;
+
+    const currentlyEnabled = settingsRepo.isCarryoverEnabled();
+    settingsRepo.set("carryover_enabled", currentlyEnabled ? "false" : "true");
+
+    const pending = requestRepo.getPending();
+    const viewId = (body as any).view?.id;
+    if (viewId) {
+      await client.views.update({
+        view_id: viewId,
+        view: buildAdminPanelModal(admin.language, pending, getCarryoverSettings(db)),
       });
     }
   });

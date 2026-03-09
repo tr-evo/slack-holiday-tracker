@@ -4,6 +4,7 @@ export interface User {
   slackId: string;
   name: string;
   annualAllowance: number;
+  carryoverDays: number;
   language: string;
   isAdmin: boolean;
 }
@@ -14,6 +15,7 @@ export interface UserRepo {
   setAdmin(slackId: string, isAdmin: boolean): void;
   setAllowance(slackId: string, allowance: number): void;
   setLanguage(slackId: string, language: string): void;
+  setCarryoverDays(slackId: string, days: number): void;
   getAdmins(): User[];
   getAll(): User[];
 }
@@ -23,6 +25,7 @@ function rowToUser(row: any): User {
     slackId: row.slack_id,
     name: row.name,
     annualAllowance: row.annual_allowance,
+    carryoverDays: row.carryover_days ?? 0,
     language: row.language,
     isAdmin: Boolean(row.is_admin),
   };
@@ -53,6 +56,10 @@ export function createUserRepo(db: Database.Database): UserRepo {
 
     setLanguage(slackId, language) {
       db.prepare("UPDATE users SET language = ? WHERE slack_id = ?").run(language, slackId);
+    },
+
+    setCarryoverDays(slackId, days) {
+      db.prepare("UPDATE users SET carryover_days = ? WHERE slack_id = ?").run(days, slackId);
     },
 
     getAdmins() {

@@ -43,7 +43,8 @@ interface ApprovedRequest {
 export function calculateRemainingDays(
   annualAllowance: number,
   approvedRequests: ApprovedRequest[],
-  publicHolidays: string[]
+  publicHolidays: string[],
+  carryoverDays: number = 0
 ): number {
   let used = 0;
   for (const req of approvedRequests) {
@@ -55,5 +56,27 @@ export function calculateRemainingDays(
       publicHolidays
     );
   }
-  return annualAllowance - used;
+  return annualAllowance + carryoverDays - used;
+}
+
+/**
+ * Returns the effective carryover days for a user right now.
+ * Returns 0 if carryover is disabled or past the cutoff date.
+ */
+export function getEffectiveCarryover(
+  userCarryoverDays: number,
+  carryoverEnabled: boolean,
+  carryoverCutoff: string,
+  today?: Date
+): number {
+  if (!carryoverEnabled || userCarryoverDays <= 0) return 0;
+
+  const now = today ?? new Date();
+  const [cutoffMonth, cutoffDay] = carryoverCutoff.split("-").map(Number);
+  const cutoffDate = new Date(now.getFullYear(), cutoffMonth - 1, cutoffDay);
+
+  // Include the cutoff day itself
+  cutoffDate.setDate(cutoffDate.getDate() + 1);
+
+  return now < cutoffDate ? userCarryoverDays : 0;
 }

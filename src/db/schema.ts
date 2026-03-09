@@ -36,5 +36,13 @@ export function initializeSchema(db: Database.Database): void {
     );
 
     INSERT OR IGNORE INTO settings (key, value) VALUES ('default_allowance', '30');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_enabled', 'false');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_cutoff', '03-31');
   `);
+
+  // Migration: add carryover_days column if missing
+  const cols = db.pragma("table_info(users)") as any[];
+  if (!cols.some((c: any) => c.name === "carryover_days")) {
+    db.exec("ALTER TABLE users ADD COLUMN carryover_days INTEGER NOT NULL DEFAULT 0");
+  }
 }

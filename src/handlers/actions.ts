@@ -3,7 +3,8 @@ import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
-import { calculateRemainingDays } from "../services/allowance.js";
+import { calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
+import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
 import { t } from "../i18n/t.js";
@@ -94,6 +95,7 @@ export function registerActionHandlers(app: App) {
     const userRepo = createUserRepo(db);
     const requestRepo = createRequestRepo(db);
     const publicHolidayRepo = createPublicHolidayRepo(db);
+    const settingsRepo = createSettingsRepo(db);
 
     const user = userRepo.findById(body.user.id);
     if (!user) return;
@@ -101,8 +103,24 @@ export function registerActionHandlers(app: App) {
     const year = new Date().getFullYear();
     const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
     const publicHolidays = publicHolidayRepo.getDatesForYear(year);
-    const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays);
-    const used = user.annualAllowance - remaining;
+    const carryover = getEffectiveCarryover(
+      user.carryoverDays,
+      settingsRepo.isCarryoverEnabled(),
+      settingsRepo.getCarryoverCutoff()
+    );
+    const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
+    const used = user.annualAllowance + carryover - remaining;
+
+    const lines = [
+      t("balance.total", user.language, { days: String(user.annualAllowance) }),
+    ];
+    if (carryover > 0) {
+      lines.push(t("balance.carryover", user.language, { days: String(carryover) }));
+    }
+    lines.push(
+      t("balance.used", user.language, { days: String(used) }),
+      `*${t("balance.remaining", user.language, { days: String(remaining) })}*`
+    );
 
     await client.views.push({
       trigger_id: (body as any).trigger_id,
@@ -115,11 +133,7 @@ export function registerActionHandlers(app: App) {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: [
-                t("balance.total", user.language, { days: String(user.annualAllowance) }),
-                t("balance.used", user.language, { days: String(used) }),
-                `*${t("balance.remaining", user.language, { days: String(remaining) })}*`,
-              ].join("\n"),
+              text: lines.join("\n"),
             },
           },
         ],

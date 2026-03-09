@@ -53,5 +53,14 @@
   "admin.bundesland": "Bundesland",
   "admin.year": "Jahr",
   "admin.holidays_imported": "{count} Feiertage für {land} ({year}) importiert",
+  "balance.carryover": "Übertrag: {days} Tage",
+  "admin.carryover_section": "Urlaubsübertrag",
+  "admin.carryover_enabled": "Übertrag aktiviert",
+  "admin.carryover_cutoff": "Stichtag (MM-TT)",
+  "admin.carryover_days": "Übertragstage",
+  "admin.carryover_toggle": "Übertrag aktivieren",
+  "admin.carryover_toggle_off": "Übertrag deaktivieren",
+  "admin.carryover_status_on": "Übertrag ist aktiviert (Stichtag: {cutoff})",
+  "admin.carryover_status_off": "Übertrag ist deaktiviert",
   "error.generic": "Etwas ist schiefgelaufen. Bitte versuche es erneut."
 }

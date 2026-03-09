@@ -1,7 +1,12 @@
 import { t } from "../i18n/t.js";
 import type { HolidayRequest } from "../db/repositories/requestRepo.js";
 
-export function buildAdminPanelModal(lang: string, pendingRequests: HolidayRequest[]) {
+interface CarryoverSettings {
+  enabled: boolean;
+  cutoff: string;
+}
+
+export function buildAdminPanelModal(lang: string, pendingRequests: HolidayRequest[], carryover?: CarryoverSettings) {
   const blocks: any[] = [];
 
   // Pending requests section
@@ -54,7 +59,52 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
 
   blocks.push({ type: "divider" });
 
-  // User management section
+  // Carryover section
+  blocks.push({
+    type: "header",
+    text: { type: "plain_text", text: t("admin.carryover_section", lang) },
+  });
+
+  const carryoverEnabled = carryover?.enabled ?? false;
+  const carryoverCutoff = carryover?.cutoff ?? "03-31";
+  blocks.push({
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: carryoverEnabled
+        ? t("admin.carryover_status_on", lang, { cutoff: carryoverCutoff })
+        : t("admin.carryover_status_off", lang),
+    },
+    accessory: {
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: carryoverEnabled
+          ? t("admin.carryover_toggle_off", lang)
+          : t("admin.carryover_toggle", lang),
+      },
+      action_id: "toggle_carryover",
+    },
+  });
+
+  if (carryoverEnabled) {
+    blocks.push({
+      type: "input",
+      block_id: "carryover_cutoff_block",
+      optional: true,
+      element: {
+        type: "plain_text_input",
+        action_id: "carryover_cutoff",
+        initial_value: carryoverCutoff,
+        placeholder: { type: "plain_text", text: "03-31" },
+      },
+      label: { type: "plain_text", text: t("admin.carryover_cutoff", lang) },
+    });
+  }
+
+  blocks.push({ type: "divider" });
+
+  // User management section — set allowance & carryover days
   blocks.push({
     type: "header",
     text: { type: "plain_text", text: t("admin.set_allowance", lang) },
@@ -87,6 +137,23 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
     },
     label: { type: "plain_text", text: t("admin.set_allowance", lang) },
   });
+
+  if (carryoverEnabled) {
+    blocks.push({
+      type: "input",
+      block_id: "carryover_days_block",
+      optional: true,
+      element: {
+        type: "number_input",
+        action_id: "admin_carryover_days",
+        is_decimal_allowed: false,
+        min_value: "0",
+        max_value: "365",
+        placeholder: { type: "plain_text", text: "0" },
+      },
+      label: { type: "plain_text", text: t("admin.carryover_days", lang) },
+    });
+  }
 
   blocks.push({ type: "divider" });
 

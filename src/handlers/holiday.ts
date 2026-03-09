@@ -5,7 +5,8 @@ import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
-import { calculateRemainingDays } from "../services/allowance.js";
+import { calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
+import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { t } from "../i18n/t.js";
 
 function ensureUser(slackId: string, name: string) {
@@ -39,18 +40,31 @@ export function registerHolidayHandlers(app: App) {
       const db = getDb();
       const requestRepo = createRequestRepo(db);
       const publicHolidayRepo = createPublicHolidayRepo(db);
+      const settingsRepo = createSettingsRepo(db);
       const year = new Date().getFullYear();
       const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
       const publicHolidays = publicHolidayRepo.getDatesForYear(year);
-      const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays);
-      const used = user.annualAllowance - remaining;
+      const carryover = getEffectiveCarryover(
+        user.carryoverDays,
+        settingsRepo.isCarryoverEnabled(),
+        settingsRepo.getCarryoverCutoff()
+      );
+      const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
+      const used = user.annualAllowance + carryover - remaining;
 
-      await sendDM(client, userId, [
+      const lines = [
         `*${t("balance.title", user.language)}*`,
         t("balance.total", user.language, { days: String(user.annualAllowance) }),
+      ];
+      if (carryover > 0) {
+        lines.push(t("balance.carryover", user.language, { days: String(carryover) }));
+      }
+      lines.push(
         t("balance.used", user.language, { days: String(used) }),
         t("balance.remaining", user.language, { days: String(remaining) }),
-      ].join("\n"));
+      );
+
+      await sendDM(client, userId, lines.join("\n"));
       return;
     }
 

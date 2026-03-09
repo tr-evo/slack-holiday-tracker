@@ -3,7 +3,8 @@ import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
-import { calculateRequestDays, calculateRemainingDays } from "../services/allowance.js";
+import { calculateRequestDays, calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
+import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { t } from "../i18n/t.js";
 
 export function registerSubmissionHandlers(app: App) {
@@ -42,7 +43,13 @@ export function registerSubmissionHandlers(app: App) {
     const publicHolidays = publicHolidayRepo.getDatesForYear(year);
     const requestedDays = calculateRequestDays(startDate, endDate, halfDayStart, halfDayEnd, publicHolidays);
     const approved = requestRepo.getApprovedForUserInYear(userId, year);
-    const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays);
+    const settingsRepo = createSettingsRepo(db);
+    const carryover = getEffectiveCarryover(
+      user.carryoverDays,
+      settingsRepo.isCarryoverEnabled(),
+      settingsRepo.getCarryoverCutoff()
+    );
+    const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
 
     if (requestedDays > remaining) {
       await ack({

@@ -53,6 +53,15 @@
   "admin.bundesland": "Federal State",
   "admin.year": "Year",
   "admin.holidays_imported": "{count} public holidays imported for {land} ({year})",
+  "balance.carryover": "Carryover: {days} days",
+  "admin.carryover_section": "Holiday Carryover",
+  "admin.carryover_enabled": "Carryover enabled",
+  "admin.carryover_cutoff": "Cutoff date (MM-DD)",
+  "admin.carryover_days": "Carryover Days",
+  "admin.carryover_toggle": "Enable Carryover",
+  "admin.carryover_toggle_off": "Disable Carryover",
+  "admin.carryover_status_on": "Carryover is enabled (cutoff: {cutoff})",
+  "admin.carryover_status_off": "Carryover is disabled",
   "error.generic": "Something went wrong. Please try again.",
   "__test_only_en__": "test"
 }
