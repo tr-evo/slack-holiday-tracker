@@ -51,6 +51,11 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
       },
       {
         type: "button",
+        text: { type: "plain_text", text: t("admin.batch_past_holiday", lang) },
+        action_id: "open_batch_past_holiday",
+      },
+      {
+        type: "button",
         text: { type: "plain_text", text: t("admin.import_holidays", lang) },
         action_id: "open_import_holidays",
       },

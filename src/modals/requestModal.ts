@@ -1,6 +1,16 @@
 import { t } from "../i18n/t.js";
 
-export function buildRequestModal(lang: string) {
+export function buildRequestModal(lang: string, initialStartDate?: string) {
+  const endDateElement: Record<string, any> = {
+    type: "datepicker",
+    action_id: "end_date",
+  };
+
+  // If a start date is provided, pre-fill the end date to at least that value
+  if (initialStartDate) {
+    endDateElement.initial_date = initialStartDate;
+  }
+
   return {
     type: "modal" as const,
     callback_id: "submit_holiday_request",
@@ -11,21 +21,21 @@ export function buildRequestModal(lang: string) {
       {
         type: "input",
         block_id: "start_date_block",
+        dispatch_action: true,
         element: {
           type: "datepicker",
           action_id: "start_date",
           placeholder: { type: "plain_text", text: t("request.start_date", lang) },
+          ...(initialStartDate ? { initial_date: initialStartDate } : {}),
         },
         label: { type: "plain_text", text: t("request.start_date", lang) },
       },
       {
         type: "input",
         block_id: "end_date_block",
-        element: {
-          type: "datepicker",
-          action_id: "end_date",
-        },
+        element: endDateElement,
         label: { type: "plain_text", text: t("request.end_date", lang) },
+        hint: { type: "plain_text", text: t("request.end_date_hint", lang) },
       },
       {
         type: "input",
@@ -46,6 +56,7 @@ export function buildRequestModal(lang: string) {
           ],
         },
         label: { type: "plain_text", text: t("request.half_day_start", lang).split(" (")[0] },
+        hint: { type: "plain_text", text: t("request.half_day_hint", lang) },
       },
       {
         type: "input",

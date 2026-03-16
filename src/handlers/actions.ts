@@ -3,7 +3,7 @@ import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
-import { calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
+import { calculateRemainingDays, getEffectiveCarryover, calculateUsageBreakdown, calculateRequestDays } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
@@ -110,6 +110,7 @@ export function registerActionHandlers(app: App) {
     );
     const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
     const used = user.annualAllowance + carryover - remaining;
+    const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
 
     const lines = [
       t("balance.total", user.language, { days: String(user.annualAllowance) }),
@@ -117,10 +118,14 @@ export function registerActionHandlers(app: App) {
     if (carryover > 0) {
       lines.push(t("balance.carryover", user.language, { days: String(carryover) }));
     }
-    lines.push(
-      t("balance.used", user.language, { days: String(used) }),
-      `*${t("balance.remaining", user.language, { days: String(remaining) })}*`
-    );
+    lines.push(t("balance.used", user.language, { days: String(used) }));
+    if (carryover > 0) {
+      lines.push(
+        `  └ ${t("balance.used_from_carryover", user.language, { days: String(breakdown.usedFromCarryover) })}`,
+        `  └ ${t("balance.used_from_allowance", user.language, { days: String(breakdown.usedFromAllowance) })}`
+      );
+    }
+    lines.push(`*${t("balance.remaining", user.language, { days: String(remaining) })}*`);
 
     await client.views.push({
       trigger_id: (body as any).trigger_id,
@@ -147,11 +152,24 @@ export function registerActionHandlers(app: App) {
     const db = getDb();
     const userRepo = createUserRepo(db);
     const requestRepo = createRequestRepo(db);
+    const publicHolidayRepo = createPublicHolidayRepo(db);
+    const settingsRepo = createSettingsRepo(db);
 
     const user = userRepo.findById(body.user.id);
     if (!user) return;
 
     const requests = requestRepo.listByUser(user.slackId);
+
+    // Calculate source breakdown for approved requests
+    const year = new Date().getFullYear();
+    const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
+    const publicHolidays = publicHolidayRepo.getDatesForYear(year);
+    const carryover = getEffectiveCarryover(
+      user.carryoverDays,
+      settingsRepo.isCarryoverEnabled(),
+      settingsRepo.getCarryoverCutoff()
+    );
+    const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
 
     const blocks: any[] = [];
 
@@ -167,11 +185,22 @@ export function registerActionHandlers(app: App) {
           r.halfDayStart ? `(${t("request.half_day_start", user.language)})` : "",
           r.halfDayEnd ? `(${t("request.half_day_end", user.language)})` : "",
         ].filter(Boolean).join(" ");
+        const days = calculateRequestDays(r.startDate, r.endDate, r.halfDayStart, r.halfDayEnd, publicHolidays);
+
+        // Show source pot for approved requests when carryover is active
+        let sourceInfo = "";
+        if (r.status === "approved" && carryover > 0) {
+          const source = breakdown.requestSources.get(r.id);
+          if (source) {
+            sourceInfo = ` · _${t(`list.source_${source}`, user.language)}_`;
+          }
+        }
+
         blocks.push({
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `${r.startDate} → ${r.endDate} ${halfDayInfo}\n*${status}*${r.reason ? `\n> ${r.reason}` : ""}`,
+            text: `${r.startDate} → ${r.endDate} ${halfDayInfo} (${days}d${sourceInfo})\n*${status}*${r.reason ? `\n> ${r.reason}` : ""}`,
           },
         });
         blocks.push({ type: "divider" });
@@ -244,6 +273,49 @@ export function registerActionHandlers(app: App) {
       view_id: (body as any).view?.id,
       view: buildMainMenuModal(newLang, user.isAdmin),
     });
+  });
+
+  // When start date changes, update end date picker to default to the selected start date
+  app.action("start_date", async ({ ack, body, client }) => {
+    await ack();
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const user = userRepo.findById(body.user.id);
+    const lang = user?.language ?? "en";
+
+    const view = (body as any).view;
+    const values = view?.state?.values;
+    const selectedStartDate = values?.start_date_block?.start_date?.selected_date;
+    const selectedEndDate = values?.end_date_block?.end_date?.selected_date;
+
+    // Only update if start date is set and end date is either empty or before start date
+    if (selectedStartDate && (!selectedEndDate || selectedEndDate < selectedStartDate)) {
+      const updatedModal = buildRequestModal(lang, selectedStartDate);
+
+      // Preserve the currently selected half-day options
+      const selectedHalfDays = values?.half_days_block?.half_days?.selected_options ?? [];
+      if (selectedHalfDays.length > 0) {
+        const halfDaysBlock = updatedModal.blocks.find((b: any) => b.block_id === "half_days_block");
+        if (halfDaysBlock) {
+          (halfDaysBlock.element as any).initial_options = selectedHalfDays;
+        }
+      }
+
+      // Preserve reason text
+      const reasonValue = values?.reason_block?.reason?.value;
+      if (reasonValue) {
+        const reasonBlock = updatedModal.blocks.find((b: any) => b.block_id === "reason_block");
+        if (reasonBlock) {
+          (reasonBlock.element as any).initial_value = reasonValue;
+        }
+      }
+
+      await client.views.update({
+        view_id: view.id,
+        hash: view.hash,
+        view: updatedModal,
+      });
+    }
   });
 
   // Acknowledge half_days checkboxes action (no-op, values read on submit)
