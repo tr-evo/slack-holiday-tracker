@@ -76,54 +76,66 @@ export function registerSubmissionHandlers(app: App) {
       reason,
     });
 
-    // Notify user
-    await client.chat.postMessage({
-      channel: userId,
-      text: t("request.submitted", user.language),
-    });
+    // Auto-approve past holidays, require approval for future ones
+    const today = new Date().toISOString().slice(0, 10);
+    const isPast = endDate < today;
 
-    // Notify admins
-    const admins = userRepo.getAdmins();
-    const daysText = t("approval.days", user.language, { count: String(requestedDays) });
-    for (const admin of admins) {
-      const adminLang = admin.language;
+    if (isPast) {
+      requestRepo.approve(requestId, userId, null);
       await client.chat.postMessage({
-        channel: admin.slackId,
-        text: t("approval.new_request", adminLang, { name: user.name }),
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: [
-                `*${t("approval.new_request", adminLang, { name: user.name })}*`,
-                t("approval.dates", adminLang, { start: startDate, end: endDate }),
-                daysText,
-                reason ? `> ${reason}` : "",
-              ].filter(Boolean).join("\n"),
-            },
-          },
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: { type: "plain_text", text: t("approval.approve", adminLang) },
-                style: "primary",
-                action_id: "approve_request",
-                value: String(requestId),
-              },
-              {
-                type: "button",
-                text: { type: "plain_text", text: t("approval.reject", adminLang) },
-                style: "danger",
-                action_id: "reject_request",
-                value: String(requestId),
-              },
-            ],
-          },
-        ],
+        channel: userId,
+        text: t("request.past_auto_approved", user.language, { start: startDate, end: endDate }),
       });
+    } else {
+      // Notify user
+      await client.chat.postMessage({
+        channel: userId,
+        text: t("request.submitted", user.language),
+      });
+
+      // Notify admins
+      const admins = userRepo.getAdmins();
+      const daysText = t("approval.days", user.language, { count: String(requestedDays) });
+      for (const admin of admins) {
+        const adminLang = admin.language;
+        await client.chat.postMessage({
+          channel: admin.slackId,
+          text: t("approval.new_request", adminLang, { name: user.name }),
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: [
+                  `*${t("approval.new_request", adminLang, { name: user.name })}*`,
+                  t("approval.dates", adminLang, { start: startDate, end: endDate }),
+                  daysText,
+                  reason ? `> ${reason}` : "",
+                ].filter(Boolean).join("\n"),
+              },
+            },
+            {
+              type: "actions",
+              elements: [
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: t("approval.approve", adminLang) },
+                  style: "primary",
+                  action_id: "approve_request",
+                  value: String(requestId),
+                },
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: t("approval.reject", adminLang) },
+                  style: "danger",
+                  action_id: "reject_request",
+                  value: String(requestId),
+                },
+              ],
+            },
+          ],
+        });
+      }
     }
   });
 }

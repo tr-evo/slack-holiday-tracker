@@ -62,6 +62,7 @@
   "admin.carryover_toggle_off": "Disable Carryover",
   "admin.carryover_status_on": "Carryover is enabled (cutoff: {cutoff})",
   "admin.carryover_status_off": "Carryover is disabled",
+  "request.past_auto_approved": "Holiday from {start} to {end} has been automatically recorded.",
   "error.generic": "Something went wrong. Please try again.",
   "__test_only_en__": "test"
 }

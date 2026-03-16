@@ -62,5 +62,6 @@
   "admin.carryover_toggle_off": "Übertrag deaktivieren",
   "admin.carryover_status_on": "Übertrag ist aktiviert (Stichtag: {cutoff})",
   "admin.carryover_status_off": "Übertrag ist deaktiviert",
+  "request.past_auto_approved": "Urlaub vom {start} bis {end} wurde automatisch nachgetragen.",
   "error.generic": "Etwas ist schiefgelaufen. Bitte versuche es erneut."
 }
