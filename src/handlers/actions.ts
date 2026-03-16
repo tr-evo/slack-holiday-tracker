@@ -88,6 +88,19 @@ export function registerActionHandlers(app: App) {
     });
   });
 
+  // Menu: open request modal for past holidays (nachtragen)
+  app.action("open_nachtragen_modal", async ({ ack, body, client }) => {
+    await ack();
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const user = userRepo.findById(body.user.id);
+    const lang = user?.language ?? "en";
+    await client.views.push({
+      trigger_id: (body as any).trigger_id,
+      view: buildRequestModal(lang),
+    });
+  });
+
   // Menu: show balance (push modal view)
   app.action("show_balance", async ({ ack, body, client }) => {
     await ack();

@@ -34,6 +34,7 @@
   "menu.balance": "View Balance",
   "menu.list": "My Requests",
   "menu.holidays": "Public Holidays",
+  "menu.add_past": "Add Past Holiday",
   "menu.admin": "Admin Panel",
   "menu.language": "Language",
   "admin.title": "Admin Panel",

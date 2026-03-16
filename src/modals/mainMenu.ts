@@ -26,6 +26,11 @@ export function buildMainMenuModal(lang: string, isAdmin: boolean) {
           text: { type: "plain_text", text: t("menu.holidays", lang) },
           action_id: "show_holidays",
         },
+        {
+          type: "button",
+          text: { type: "plain_text", text: t("menu.add_past", lang) },
+          action_id: "open_nachtragen_modal",
+        },
       ],
     },
   ];

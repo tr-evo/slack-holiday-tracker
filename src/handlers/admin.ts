@@ -3,7 +3,6 @@ import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { buildAdminPanelModal } from "../modals/adminPanel.js";
-import { buildPastHolidayModal } from "../modals/pastHolidayModal.js";
 import { buildBatchPastHolidayModal, parseDateRanges } from "../modals/batchPastHolidayModal.js";
 import { buildImportHolidaysModal } from "../modals/importHolidaysModal.js";
 import { seedPublicHolidays, BUNDESLAENDER } from "../services/publicHolidays.js";
@@ -42,7 +41,6 @@ export function registerAdminHandlers(app: App) {
 
   app.options("admin_user_select", handleUserOptions);
   app.options("admin_toggle_user_select", handleUserOptions);
-  app.options("past_user_select", handleUserOptions);
   app.options("batch_user_select", handleUserOptions);
   // Open admin panel from menu
   app.action("open_admin_panel", async ({ ack, body, client }) => {
@@ -181,81 +179,7 @@ export function registerAdminHandlers(app: App) {
     }
   });
 
-  // Open "Add Past Holiday" modal
-  app.action("open_add_past_holiday", async ({ ack, body, client }) => {
-    await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) return;
-
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: buildPastHolidayModal(admin.language),
-    });
-  });
-
-  // Handle "Add Past Holiday" submission
-  app.view("past_holiday_submit", async ({ ack, body, view, client }) => {
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
-
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) {
-      await ack();
-      return;
-    }
-
-    const values = view.state.values;
-    const selectedUserId = values.past_user_block?.past_user_select?.selected_option?.value;
-    const startDate = values.past_start_block?.past_start_date?.selected_date;
-    const endDate = values.past_end_block?.past_end_date?.selected_date;
-    const halfDays = values.past_half_days_block?.past_half_days?.selected_options ?? [];
-    const halfDayStart = halfDays.some((o: any) => o.value === "half_day_start");
-    const halfDayEnd = halfDays.some((o: any) => o.value === "half_day_end");
-    const reason = values.past_reason_block?.past_reason?.value ?? null;
-
-    if (!selectedUserId || !startDate || !endDate) {
-      await ack();
-      return;
-    }
-
-    if (endDate < startDate) {
-      await ack({
-        response_action: "errors",
-        errors: { past_end_block: t("request.invalid_dates", admin.language) },
-      });
-      return;
-    }
-
-    await ack();
-
-    // Ensure user exists
-    userRepo.upsert({ slackId: selectedUserId, name: selectedUserId });
-
-    // Create as pending then immediately approve
-    const requestId = requestRepo.create({
-      userId: selectedUserId,
-      startDate,
-      endDate,
-      halfDayStart,
-      halfDayEnd,
-      reason,
-    });
-    requestRepo.approve(requestId, body.user.id, null);
-
-    await client.chat.postMessage({
-      channel: body.user.id,
-      text: t("admin.past_holiday_added", admin.language, {
-        user: selectedUserId,
-        start: startDate,
-        end: endDate,
-      }),
-    });
-  });
-
-  // Open "Batch Add Past Holidays" modal
+  // Open "Batch Add Past Holidays" modal (use views.open to avoid depth-3 stacking limit)
   app.action("open_batch_past_holiday", async ({ ack, body, client }) => {
     await ack();
     const db = getDb();
@@ -263,7 +187,7 @@ export function registerAdminHandlers(app: App) {
     const admin = userRepo.findById(body.user.id);
     if (!admin?.isAdmin) return;
 
-    await client.views.push({
+    await client.views.open({
       trigger_id: (body as any).trigger_id,
       view: buildBatchPastHolidayModal(admin.language),
     });
@@ -331,7 +255,7 @@ export function registerAdminHandlers(app: App) {
     });
   });
 
-  // Open "Import Public Holidays" modal
+  // Open "Import Public Holidays" modal (use views.open to avoid depth-3 stacking limit)
   app.action("open_import_holidays", async ({ ack, body, client }) => {
     await ack();
     const db = getDb();
@@ -339,7 +263,7 @@ export function registerAdminHandlers(app: App) {
     const admin = userRepo.findById(body.user.id);
     if (!admin?.isAdmin) return;
 
-    await client.views.push({
+    await client.views.open({
       trigger_id: (body as any).trigger_id,
       view: buildImportHolidaysModal(admin.language),
     });
