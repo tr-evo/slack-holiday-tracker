@@ -4,6 +4,7 @@ import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { buildAdminPanelModal } from "../modals/adminPanel.js";
 import { buildPastHolidayModal } from "../modals/pastHolidayModal.js";
+import { buildBatchPastHolidayModal, parseDateRanges } from "../modals/batchPastHolidayModal.js";
 import { buildImportHolidaysModal } from "../modals/importHolidaysModal.js";
 import { seedPublicHolidays, BUNDESLAENDER } from "../services/publicHolidays.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
@@ -42,6 +43,7 @@ export function registerAdminHandlers(app: App) {
   app.options("admin_user_select", handleUserOptions);
   app.options("admin_toggle_user_select", handleUserOptions);
   app.options("past_user_select", handleUserOptions);
+  app.options("batch_user_select", handleUserOptions);
   // Open admin panel from menu
   app.action("open_admin_panel", async ({ ack, body, client }) => {
     await ack();
@@ -249,6 +251,82 @@ export function registerAdminHandlers(app: App) {
         user: selectedUserId,
         start: startDate,
         end: endDate,
+      }),
+    });
+  });
+
+  // Open "Batch Add Past Holidays" modal
+  app.action("open_batch_past_holiday", async ({ ack, body, client }) => {
+    await ack();
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const admin = userRepo.findById(body.user.id);
+    if (!admin?.isAdmin) return;
+
+    await client.views.push({
+      trigger_id: (body as any).trigger_id,
+      view: buildBatchPastHolidayModal(admin.language),
+    });
+  });
+
+  // Handle "Batch Add Past Holidays" submission
+  app.view("batch_past_holiday_submit", async ({ ack, body, view, client }) => {
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const requestRepo = createRequestRepo(db);
+
+    const admin = userRepo.findById(body.user.id);
+    if (!admin?.isAdmin) {
+      await ack();
+      return;
+    }
+
+    const values = view.state.values;
+    const selectedUserId = values.batch_user_block?.batch_user_select?.selected_option?.value;
+    const datesText = values.batch_dates_block?.batch_dates?.value;
+
+    if (!selectedUserId || !datesText) {
+      await ack();
+      return;
+    }
+
+    const { ranges, errors } = parseDateRanges(datesText);
+
+    if (errors.length > 0) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          batch_dates_block: errors
+            .map((line) => t("admin.batch_parse_error", admin.language, { line }))
+            .join("; "),
+        },
+      });
+      return;
+    }
+
+    await ack();
+
+    // Ensure user exists
+    userRepo.upsert({ slackId: selectedUserId, name: selectedUserId });
+
+    // Create and auto-approve each entry
+    for (const range of ranges) {
+      const requestId = requestRepo.create({
+        userId: selectedUserId,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        halfDayStart: false,
+        halfDayEnd: false,
+        reason: null,
+      });
+      requestRepo.approve(requestId, body.user.id, null);
+    }
+
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: t("admin.batch_past_holidays_added", admin.language, {
+        count: String(ranges.length),
+        user: selectedUserId,
       }),
     });
   });

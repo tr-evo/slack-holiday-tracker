@@ -59,6 +59,55 @@ export function calculateRemainingDays(
   return annualAllowance + carryoverDays - used;
 }
 
+export interface UsageBreakdown {
+  usedFromCarryover: number;
+  usedFromAllowance: number;
+  /** Per-request source: "carryover", "allowance", or "mixed" */
+  requestSources: Map<number, "carryover" | "allowance" | "mixed">;
+}
+
+/**
+ * Calculate how much was used from carryover vs regular allowance.
+ * Carryover is consumed first (FIFO).
+ */
+export function calculateUsageBreakdown(
+  carryoverDays: number,
+  approvedRequests: (ApprovedRequest & { id: number })[],
+  publicHolidays: string[]
+): UsageBreakdown {
+  let carryoverRemaining = carryoverDays;
+  let usedFromCarryover = 0;
+  let usedFromAllowance = 0;
+  const requestSources = new Map<number, "carryover" | "allowance" | "mixed">();
+
+  // Process requests chronologically (earliest first)
+  const sorted = [...approvedRequests].sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+  for (const req of sorted) {
+    const days = calculateRequestDays(req.startDate, req.endDate, req.halfDayStart, req.halfDayEnd, publicHolidays);
+    if (days === 0) {
+      requestSources.set(req.id, "allowance");
+      continue;
+    }
+
+    const fromCarryover = Math.min(days, carryoverRemaining);
+    const fromAllowance = days - fromCarryover;
+    carryoverRemaining -= fromCarryover;
+    usedFromCarryover += fromCarryover;
+    usedFromAllowance += fromAllowance;
+
+    if (fromCarryover > 0 && fromAllowance > 0) {
+      requestSources.set(req.id, "mixed");
+    } else if (fromCarryover > 0) {
+      requestSources.set(req.id, "carryover");
+    } else {
+      requestSources.set(req.id, "allowance");
+    }
+  }
+
+  return { usedFromCarryover, usedFromAllowance, requestSources };
+}
+
 /**
  * Returns the effective carryover days for a user right now.
  * Returns 0 if carryover is disabled or past the cutoff date.

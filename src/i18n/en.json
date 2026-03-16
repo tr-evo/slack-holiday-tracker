@@ -66,6 +66,17 @@
   "admin.carryover_status_on": "Carryover is enabled (cutoff: {cutoff})",
   "admin.carryover_status_off": "Carryover is disabled",
   "request.past_auto_approved": "Holiday from {start} to {end} has been automatically recorded.",
+  "admin.batch_past_holiday": "Batch Add Past Holidays",
+  "admin.batch_past_holiday_desc": "Add multiple past holidays for one user at once. Enter one date range per line in the format: YYYY-MM-DD to YYYY-MM-DD",
+  "admin.batch_dates": "Date ranges (one per line)",
+  "admin.batch_dates_placeholder": "2024-01-15 to 2024-01-19\n2024-03-01 to 2024-03-01",
+  "admin.batch_parse_error": "Could not parse line {line}: use format YYYY-MM-DD to YYYY-MM-DD",
+  "admin.batch_past_holidays_added": "{count} past holiday(s) recorded for <@{user}>",
+  "balance.used_from_carryover": "Used from carryover: {days} days",
+  "balance.used_from_allowance": "Used from allowance: {days} days",
+  "list.source_carryover": "carryover",
+  "list.source_allowance": "allowance",
+  "list.source_mixed": "carryover + allowance",
   "error.generic": "Something went wrong. Please try again.",
   "__test_only_en__": "test"
 }
