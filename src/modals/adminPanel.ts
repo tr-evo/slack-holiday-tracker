@@ -40,23 +40,6 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
     }
   }
 
-  // Action buttons
-  blocks.push({
-    type: "actions",
-    elements: [
-      {
-        type: "button",
-        text: { type: "plain_text", text: t("admin.batch_past_holiday", lang) },
-        action_id: "open_batch_past_holiday",
-      },
-      {
-        type: "button",
-        text: { type: "plain_text", text: t("admin.import_holidays", lang) },
-        action_id: "open_import_holidays",
-      },
-    ],
-  });
-
   blocks.push({ type: "divider" });
 
   // Carryover section

@@ -179,7 +179,7 @@ export function registerAdminHandlers(app: App) {
     }
   });
 
-  // Open "Batch Add Past Holidays" modal (use views.open to avoid depth-3 stacking limit)
+  // Open "Batch Add Past Holidays" modal (pushed from main menu at depth 1 → depth 2)
   app.action("open_batch_past_holiday", async ({ ack, body, client }) => {
     await ack();
     const db = getDb();
@@ -187,7 +187,7 @@ export function registerAdminHandlers(app: App) {
     const admin = userRepo.findById(body.user.id);
     if (!admin?.isAdmin) return;
 
-    await client.views.open({
+    await client.views.push({
       trigger_id: (body as any).trigger_id,
       view: buildBatchPastHolidayModal(admin.language),
     });
@@ -255,7 +255,7 @@ export function registerAdminHandlers(app: App) {
     });
   });
 
-  // Open "Import Public Holidays" modal (use views.open to avoid depth-3 stacking limit)
+  // Open "Import Public Holidays" modal (pushed from main menu at depth 1 → depth 2)
   app.action("open_import_holidays", async ({ ack, body, client }) => {
     await ack();
     const db = getDb();
@@ -263,7 +263,7 @@ export function registerAdminHandlers(app: App) {
     const admin = userRepo.findById(body.user.id);
     if (!admin?.isAdmin) return;
 
-    await client.views.open({
+    await client.views.push({
       trigger_id: (body as any).trigger_id,
       view: buildImportHolidaysModal(admin.language),
     });
