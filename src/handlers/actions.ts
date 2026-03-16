@@ -246,6 +246,49 @@ export function registerActionHandlers(app: App) {
     });
   });
 
+  // When start date changes, update end date picker to default to the selected start date
+  app.action("start_date", async ({ ack, body, client }) => {
+    await ack();
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const user = userRepo.findById(body.user.id);
+    const lang = user?.language ?? "en";
+
+    const view = (body as any).view;
+    const values = view?.state?.values;
+    const selectedStartDate = values?.start_date_block?.start_date?.selected_date;
+    const selectedEndDate = values?.end_date_block?.end_date?.selected_date;
+
+    // Only update if start date is set and end date is either empty or before start date
+    if (selectedStartDate && (!selectedEndDate || selectedEndDate < selectedStartDate)) {
+      const updatedModal = buildRequestModal(lang, selectedStartDate);
+
+      // Preserve the currently selected half-day options
+      const selectedHalfDays = values?.half_days_block?.half_days?.selected_options ?? [];
+      if (selectedHalfDays.length > 0) {
+        const halfDaysBlock = updatedModal.blocks.find((b: any) => b.block_id === "half_days_block");
+        if (halfDaysBlock) {
+          (halfDaysBlock.element as any).initial_options = selectedHalfDays;
+        }
+      }
+
+      // Preserve reason text
+      const reasonValue = values?.reason_block?.reason?.value;
+      if (reasonValue) {
+        const reasonBlock = updatedModal.blocks.find((b: any) => b.block_id === "reason_block");
+        if (reasonBlock) {
+          (reasonBlock.element as any).initial_value = reasonValue;
+        }
+      }
+
+      await client.views.update({
+        view_id: view.id,
+        hash: view.hash,
+        view: updatedModal,
+      });
+    }
+  });
+
   // Acknowledge half_days checkboxes action (no-op, values read on submit)
   app.action("half_days", async ({ ack }) => {
     await ack();

@@ -38,6 +38,15 @@ export function registerSubmissionHandlers(app: App) {
       return;
     }
 
+    // Validate half-day options for single-day requests
+    if (startDate === endDate && halfDayStart && halfDayEnd) {
+      await ack({
+        response_action: "errors",
+        errors: { half_days_block: t("request.half_day_single_day_error", user.language) },
+      });
+      return;
+    }
+
     // Check remaining allowance
     const year = new Date().getFullYear();
     const publicHolidays = publicHolidayRepo.getDatesForYear(year);
