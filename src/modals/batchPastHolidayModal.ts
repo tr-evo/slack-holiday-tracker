@@ -1,5 +1,32 @@
 import { t } from "../i18n/t.js";
 
+export function buildUserNachtragenModal(lang: string) {
+  return {
+    type: "modal" as const,
+    callback_id: "user_nachtragen_submit",
+    title: { type: "plain_text" as const, text: t("menu.add_past", lang) },
+    submit: { type: "plain_text" as const, text: t("request.submit", lang) },
+    close: { type: "plain_text" as const, text: "Back" },
+    blocks: [
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: `_${t("nachtragen.desc", lang)}_` },
+      },
+      {
+        type: "input",
+        block_id: "batch_dates_block",
+        element: {
+          type: "plain_text_input",
+          action_id: "batch_dates",
+          multiline: true,
+          placeholder: { type: "plain_text", text: t("admin.batch_dates_placeholder", lang) },
+        },
+        label: { type: "plain_text", text: t("admin.batch_dates", lang) },
+      },
+    ],
+  };
+}
+
 export function buildBatchPastHolidayModal(lang: string) {
   return {
     type: "modal" as const,

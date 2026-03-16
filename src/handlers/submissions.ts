@@ -5,6 +5,7 @@ import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
 import { calculateRequestDays, calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
+import { parseDateRanges } from "../modals/batchPastHolidayModal.js";
 import { t } from "../i18n/t.js";
 
 export function registerSubmissionHandlers(app: App) {
@@ -146,5 +147,60 @@ export function registerSubmissionHandlers(app: App) {
         });
       }
     }
+  });
+
+  // User batch nachtragen — auto-approve all past date ranges
+  app.view("user_nachtragen_submit", async ({ ack, body, view, client }) => {
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const requestRepo = createRequestRepo(db);
+
+    const userId = body.user.id;
+    const user = userRepo.findById(userId);
+    if (!user) {
+      await ack();
+      return;
+    }
+
+    const values = view.state.values;
+    const datesText = values.batch_dates_block?.batch_dates?.value;
+
+    if (!datesText) {
+      await ack();
+      return;
+    }
+
+    const { ranges, errors } = parseDateRanges(datesText);
+
+    if (errors.length > 0) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          batch_dates_block: errors
+            .map((line) => t("admin.batch_parse_error", user.language, { line }))
+            .join("; "),
+        },
+      });
+      return;
+    }
+
+    await ack();
+
+    for (const range of ranges) {
+      const requestId = requestRepo.create({
+        userId,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        halfDayStart: false,
+        halfDayEnd: false,
+        reason: null,
+      });
+      requestRepo.approve(requestId, userId, null);
+    }
+
+    await client.chat.postMessage({
+      channel: userId,
+      text: t("nachtragen.done", user.language, { count: String(ranges.length) }),
+    });
   });
 }

@@ -7,6 +7,7 @@ import { calculateRemainingDays, getEffectiveCarryover, calculateUsageBreakdown,
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
+import { buildUserNachtragenModal } from "../modals/batchPastHolidayModal.js";
 import { t } from "../i18n/t.js";
 
 export function registerActionHandlers(app: App) {
@@ -88,7 +89,7 @@ export function registerActionHandlers(app: App) {
     });
   });
 
-  // Menu: open request modal for past holidays (nachtragen)
+  // Menu: open nachtragen modal (batch past holidays for self)
   app.action("open_nachtragen_modal", async ({ ack, body, client }) => {
     await ack();
     const db = getDb();
@@ -97,7 +98,7 @@ export function registerActionHandlers(app: App) {
     const lang = user?.language ?? "en";
     await client.views.push({
       trigger_id: (body as any).trigger_id,
-      view: buildRequestModal(lang),
+      view: buildUserNachtragenModal(lang),
     });
   });
 
