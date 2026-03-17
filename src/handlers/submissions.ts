@@ -4,7 +4,7 @@ import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { calculateRequestDays, calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { getHolidayDatesForYear, getHolidayDatesForYears } from "../services/publicHolidays.js";
+import { getHolidayDatesForYears } from "../services/publicHolidays.js";
 import { parseDateRanges, buildNachtragenPreviewModal, type PreviewEntry } from "../modals/batchPastHolidayModal.js";
 import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
@@ -52,9 +52,15 @@ export function registerSubmissionHandlers(app: App) {
 
     // Check remaining allowance
     const year = new Date().getFullYear();
-    const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
-    const requestedDays = calculateRequestDays(startDate, endDate, halfDayStart, halfDayEnd, publicHolidays);
+    // Collect all years from this request + approved requests for correct holiday exclusion
+    const requestYears = new Set([Number(startDate.slice(0, 4)), Number(endDate.slice(0, 4))]);
     const approved = requestRepo.getApprovedForUserInYear(userId, year);
+    for (const req of approved) {
+      requestYears.add(Number(req.startDate.slice(0, 4)));
+      requestYears.add(Number(req.endDate.slice(0, 4)));
+    }
+    const publicHolidays = bundesland ? await getHolidayDatesForYears([...requestYears], bundesland) : [];
+    const requestedDays = calculateRequestDays(startDate, endDate, halfDayStart, halfDayEnd, publicHolidays);
     const carryover = getEffectiveCarryover(
       user.carryoverDays,
       settingsRepo.isCarryoverEnabled(),

@@ -4,7 +4,7 @@ import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { calculateRemainingDays, getEffectiveCarryover, calculateUsageBreakdown, calculateRequestDays } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { getHolidayDatesForYear, getPublicHolidaysForYear } from "../services/publicHolidays.js";
+import { getHolidayDatesForYear, getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
 import { buildUserNachtragenModal } from "../modals/batchPastHolidayModal.js";
@@ -112,7 +112,12 @@ export function registerActionHandlers(app: App) {
 
     const year = new Date().getFullYear();
     const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-    const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
+    const requestYears = new Set([year]);
+    for (const req of approved) {
+      requestYears.add(Number(req.startDate.slice(0, 4)));
+      requestYears.add(Number(req.endDate.slice(0, 4)));
+    }
+    const publicHolidays = bundesland ? await getHolidayDatesForYears([...requestYears], bundesland) : [];
     const carryover = getEffectiveCarryover(
       user.carryoverDays,
       settingsRepo.isCarryoverEnabled(),
@@ -182,7 +187,17 @@ export function registerActionHandlers(app: App) {
     // Calculate source breakdown for approved requests
     const year = new Date().getFullYear();
     const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-    const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
+    const listYears = new Set([year]);
+    for (const req of approved) {
+      listYears.add(Number(req.startDate.slice(0, 4)));
+      listYears.add(Number(req.endDate.slice(0, 4)));
+    }
+    // Also include years from all displayed requests (not just approved)
+    for (const r of requests) {
+      listYears.add(Number(r.startDate.slice(0, 4)));
+      listYears.add(Number(r.endDate.slice(0, 4)));
+    }
+    const publicHolidays = bundesland ? await getHolidayDatesForYears([...listYears], bundesland) : [];
     const carryover = getEffectiveCarryover(
       user.carryoverDays,
       settingsRepo.isCarryoverEnabled(),
@@ -351,12 +366,20 @@ export function registerActionHandlers(app: App) {
     if (!admin?.isAdmin) return;
 
     const year = new Date().getFullYear();
-    const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
     const carryoverEnabled = settingsRepo.isCarryoverEnabled();
     const carryoverCutoff = settingsRepo.getCarryoverCutoff();
 
-    // Build balance for each user
+    // Build balance for each user — collect all relevant years first
     const allUsers = userRepo.getAll();
+    const overviewYears = new Set([year]);
+    for (const u of allUsers) {
+      const reqs = requestRepo.getApprovedForUserInYear(u.slackId, year);
+      for (const req of reqs) {
+        overviewYears.add(Number(req.startDate.slice(0, 4)));
+        overviewYears.add(Number(req.endDate.slice(0, 4)));
+      }
+    }
+    const publicHolidays = bundesland ? await getHolidayDatesForYears([...overviewYears], bundesland) : [];
     const balances = allUsers.map((user) => {
       const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
       const carryover = getEffectiveCarryover(user.carryoverDays, carryoverEnabled, carryoverCutoff);

@@ -4,9 +4,9 @@ import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
-import { calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
+import { calculateRemainingDays, calculateUsageBreakdown, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { getHolidayDatesForYear, getPublicHolidaysForYear } from "../services/publicHolidays.js";
+import { getHolidayDatesForYear, getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
 import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
 
@@ -39,7 +39,13 @@ export function registerHolidayHandlers(app: App) {
       const bundesland = settingsRepo.getBundesland();
       const year = new Date().getFullYear();
       const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-      const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
+      // Collect all years from approved requests for correct cross-year holiday exclusion
+      const requestYears = new Set([year]);
+      for (const req of approved) {
+        requestYears.add(Number(req.startDate.slice(0, 4)));
+        requestYears.add(Number(req.endDate.slice(0, 4)));
+      }
+      const publicHolidays = bundesland ? await getHolidayDatesForYears([...requestYears], bundesland) : [];
       const carryover = getEffectiveCarryover(
         user.carryoverDays,
         settingsRepo.isCarryoverEnabled(),
@@ -47,8 +53,10 @@ export function registerHolidayHandlers(app: App) {
       );
       const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
       const used = user.annualAllowance + carryover - remaining;
+      const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
 
       const cutoff = settingsRepo.getCarryoverCutoff();
+      const carryoverUnused = carryover - breakdown.usedFromCarryover;
       const cutoffDisplay = cutoff.split("-").reverse().join(".");
 
       const lines = [
@@ -57,7 +65,9 @@ export function registerHolidayHandlers(app: App) {
       ];
       if (carryover > 0) {
         lines.push(t("balance.carryover", user.language, { days: String(carryover) }));
-        lines.push(`  └ ${t("balance.carryover_expires", user.language, { days: String(carryover), date: cutoffDisplay })}`);
+        if (carryoverUnused > 0) {
+          lines.push(`  └ ${t("balance.carryover_expires", user.language, { days: String(carryoverUnused), date: cutoffDisplay })}`);
+        }
       } else if (user.carryoverDays > 0 && settingsRepo.isCarryoverEnabled()) {
         lines.push(t("balance.carryover_expired", user.language, { days: String(user.carryoverDays), date: cutoffDisplay }));
       }
