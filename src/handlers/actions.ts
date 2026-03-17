@@ -2,9 +2,9 @@ import type { App } from "@slack/bolt";
 import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
-import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
 import { calculateRemainingDays, getEffectiveCarryover, calculateUsageBreakdown, calculateRequestDays } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
+import { getHolidayDatesForYear, getPublicHolidaysForYear } from "../services/publicHolidays.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
 import { buildUserNachtragenModal } from "../modals/batchPastHolidayModal.js";
@@ -104,15 +104,15 @@ export function registerActionHandlers(app: App) {
     const db = getDb();
     const userRepo = createUserRepo(db);
     const requestRepo = createRequestRepo(db);
-    const publicHolidayRepo = createPublicHolidayRepo(db);
     const settingsRepo = createSettingsRepo(db);
+    const bundesland = settingsRepo.getBundesland();
 
     const user = userRepo.findById(body.user.id);
     if (!user) return;
 
     const year = new Date().getFullYear();
     const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-    const publicHolidays = publicHolidayRepo.getDatesForYear(year);
+    const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
     const carryover = getEffectiveCarryover(
       user.carryoverDays,
       settingsRepo.isCarryoverEnabled(),
@@ -171,8 +171,8 @@ export function registerActionHandlers(app: App) {
     const db = getDb();
     const userRepo = createUserRepo(db);
     const requestRepo = createRequestRepo(db);
-    const publicHolidayRepo = createPublicHolidayRepo(db);
     const settingsRepo = createSettingsRepo(db);
+    const bundesland = settingsRepo.getBundesland();
 
     const user = userRepo.findById(body.user.id);
     if (!user) return;
@@ -182,7 +182,7 @@ export function registerActionHandlers(app: App) {
     // Calculate source breakdown for approved requests
     const year = new Date().getFullYear();
     const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-    const publicHolidays = publicHolidayRepo.getDatesForYear(year);
+    const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
     const carryover = getEffectiveCarryover(
       user.carryoverDays,
       settingsRepo.isCarryoverEnabled(),
@@ -242,22 +242,23 @@ export function registerActionHandlers(app: App) {
     await ack();
     const db = getDb();
     const userRepo = createUserRepo(db);
-    const publicHolidayRepo = createPublicHolidayRepo(db);
+    const settingsRepo = createSettingsRepo(db);
+    const bundesland = settingsRepo.getBundesland();
 
     const user = userRepo.findById(body.user.id);
     if (!user) return;
 
     const year = new Date().getFullYear();
-    const holidays = publicHolidayRepo.getForYear(year);
 
     const blocks: any[] = [];
 
-    if (holidays.length === 0) {
+    if (!bundesland) {
       blocks.push({
         type: "section",
-        text: { type: "mrkdwn", text: t("holidays.empty", user.language, { year: String(year) }) },
+        text: { type: "mrkdwn", text: t("holidays.no_bundesland", user.language) },
       });
     } else {
+      const holidays = await getPublicHolidaysForYear(year, bundesland);
       for (const h of holidays) {
         const name = user.language === "de" ? h.nameDe : h.name;
         blocks.push({
@@ -343,14 +344,14 @@ export function registerActionHandlers(app: App) {
     const db = getDb();
     const userRepo = createUserRepo(db);
     const requestRepo = createRequestRepo(db);
-    const publicHolidayRepo = createPublicHolidayRepo(db);
     const settingsRepo = createSettingsRepo(db);
+    const bundesland = settingsRepo.getBundesland();
 
     const admin = userRepo.findById(body.user.id);
     if (!admin?.isAdmin) return;
 
     const year = new Date().getFullYear();
-    const publicHolidays = publicHolidayRepo.getDatesForYear(year);
+    const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
     const carryoverEnabled = settingsRepo.isCarryoverEnabled();
     const carryoverCutoff = settingsRepo.getCarryoverCutoff();
 

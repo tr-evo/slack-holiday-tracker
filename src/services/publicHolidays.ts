@@ -1,27 +1,3 @@
-import { getDb } from "../db/connection.js";
-import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
-
-// German holiday names → English translations
-const TRANSLATIONS: Record<string, string> = {
-  "Neujahrstag": "New Year's Day",
-  "Heilige Drei Könige": "Epiphany",
-  "Internationaler Frauentag": "International Women's Day",
-  "Karfreitag": "Good Friday",
-  "Ostermontag": "Easter Monday",
-  "Tag der Arbeit": "Labour Day",
-  "Christi Himmelfahrt": "Ascension Day",
-  "Pfingstmontag": "Whit Monday",
-  "Fronleichnam": "Corpus Christi",
-  "Mariä Himmelfahrt": "Assumption Day",
-  "Weltkindertag": "World Children's Day",
-  "Tag der Deutschen Einheit": "German Unity Day",
-  "Reformationstag": "Reformation Day",
-  "Allerheiligen": "All Saints' Day",
-  "Buß- und Bettag": "Repentance and Prayer Day",
-  "1. Weihnachtstag": "Christmas Day",
-  "2. Weihnachtstag": "St. Stephen's Day",
-};
-
 export const BUNDESLAENDER: Record<string, string> = {
   BW: "Baden-Württemberg",
   BY: "Bayern",
@@ -41,31 +17,47 @@ export const BUNDESLAENDER: Record<string, string> = {
   TH: "Thüringen",
 };
 
-interface FeiertageResponse {
-  [name: string]: { datum: string; hinweis: string };
+export interface PublicHoliday {
+  date: string;
+  name: string;
+  nameDe: string;
 }
 
-export async function fetchPublicHolidays(year: number, bundesland: string): Promise<{ date: string; name: string; nameDe: string }[]> {
-  const url = `https://feiertage-api.de/api/?jahr=${year}&nur_land=${bundesland}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch holidays: ${res.status}`);
-  const data: FeiertageResponse = await res.json();
+let _feiertagejs: any = null;
 
-  return Object.entries(data).map(([nameDe, { datum }]) => ({
-    date: datum,
-    name: TRANSLATIONS[nameDe] ?? nameDe,
-    nameDe,
+async function loadFeiertagejs() {
+  if (!_feiertagejs) {
+    _feiertagejs = await import("feiertagejs");
+  }
+  return _feiertagejs;
+}
+
+/**
+ * Get public holidays for a given year and Bundesland using feiertagejs.
+ * Works for any year, no API calls or DB needed.
+ */
+export async function getPublicHolidaysForYear(year: number, bundesland: string): Promise<PublicHoliday[]> {
+  const f = await loadFeiertagejs();
+  const holidays = f.getHolidays(year, bundesland as any);
+  return holidays.map((h: any) => ({
+    date: h.date.toISOString().slice(0, 10),
+    nameDe: h.translate("de"),
+    name: h.translate("en") || h.translate("de"),
   }));
 }
 
-export async function seedPublicHolidays(year: number, bundesland: string): Promise<number> {
-  const holidays = await fetchPublicHolidays(year, bundesland);
-  const db = getDb();
-  const repo = createPublicHolidayRepo(db);
+/**
+ * Get just the date strings for holiday calculation.
+ */
+export async function getHolidayDatesForYear(year: number, bundesland: string): Promise<string[]> {
+  const holidays = await getPublicHolidaysForYear(year, bundesland);
+  return holidays.map((h) => h.date);
+}
 
-  for (const h of holidays) {
-    repo.add(h);
-  }
-
-  return holidays.length;
+/**
+ * Get holiday dates across multiple years.
+ */
+export async function getHolidayDatesForYears(years: number[], bundesland: string): Promise<string[]> {
+  const results = await Promise.all(years.map((y) => getHolidayDatesForYear(y, bundesland)));
+  return results.flat();
 }

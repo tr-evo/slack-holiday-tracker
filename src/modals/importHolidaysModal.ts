@@ -3,7 +3,9 @@ import { BUNDESLAENDER } from "../services/publicHolidays.js";
 
 export function buildImportHolidaysModal(lang: string) {
   const currentYear = new Date().getFullYear();
-  const yearOptions = [currentYear, currentYear + 1].map((y) => ({
+  const years: number[] = [];
+  for (let y = currentYear + 1; y >= 2020; y--) years.push(y);
+  const yearOptions = years.map((y) => ({
     text: { type: "plain_text" as const, text: String(y) },
     value: String(y),
   }));

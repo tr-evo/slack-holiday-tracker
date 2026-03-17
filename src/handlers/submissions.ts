@@ -2,10 +2,10 @@ import type { App } from "@slack/bolt";
 import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
-import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
 import { calculateRequestDays, calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { parseDateRanges, buildNachtragenPreviewModal } from "../modals/batchPastHolidayModal.js";
+import { getHolidayDatesForYear, getHolidayDatesForYears } from "../services/publicHolidays.js";
+import { parseDateRanges, buildNachtragenPreviewModal, type PreviewEntry } from "../modals/batchPastHolidayModal.js";
 import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
 
@@ -14,7 +14,8 @@ export function registerSubmissionHandlers(app: App) {
     const db = getDb();
     const userRepo = createUserRepo(db);
     const requestRepo = createRequestRepo(db);
-    const publicHolidayRepo = createPublicHolidayRepo(db);
+    const settingsRepo = createSettingsRepo(db);
+    const bundesland = settingsRepo.getBundesland();
 
     const userId = body.user.id;
     const user = userRepo.findById(userId);
@@ -51,10 +52,9 @@ export function registerSubmissionHandlers(app: App) {
 
     // Check remaining allowance
     const year = new Date().getFullYear();
-    const publicHolidays = publicHolidayRepo.getDatesForYear(year);
+    const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
     const requestedDays = calculateRequestDays(startDate, endDate, halfDayStart, halfDayEnd, publicHolidays);
     const approved = requestRepo.getApprovedForUserInYear(userId, year);
-    const settingsRepo = createSettingsRepo(db);
     const carryover = getEffectiveCarryover(
       user.carryoverDays,
       settingsRepo.isCarryoverEnabled(),
@@ -148,6 +148,8 @@ export function registerSubmissionHandlers(app: App) {
   app.view("user_nachtragen_submit", async ({ ack, body, view }) => {
     const db = getDb();
     const userRepo = createUserRepo(db);
+    const settingsRepo = createSettingsRepo(db);
+    const bundesland = settingsRepo.getBundesland();
 
     const user = userRepo.findById(body.user.id);
     if (!user) {
@@ -177,10 +179,22 @@ export function registerSubmissionHandlers(app: App) {
       return;
     }
 
+    // Get public holidays for all relevant years
+    const years = [...new Set(ranges.flatMap((r) => [
+      Number(r.startDate.slice(0, 4)),
+      Number(r.endDate.slice(0, 4)),
+    ]))];
+    const publicHolidays = bundesland ? await getHolidayDatesForYears(years, bundesland) : [];
+
+    const entries: PreviewEntry[] = ranges.map((range) => ({
+      range,
+      days: calculateRequestDays(range.startDate, range.endDate, false, false, publicHolidays),
+    }));
+
     const metadata = JSON.stringify({ ranges });
     await ack({
       response_action: "push",
-      view: buildNachtragenPreviewModal(user.language, ranges, "user_nachtragen_confirm", metadata),
+      view: buildNachtragenPreviewModal(user.language, entries, "user_nachtragen_confirm", metadata),
     } as any);
   });
 

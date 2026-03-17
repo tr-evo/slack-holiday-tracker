@@ -1,4 +1,5 @@
 import { t } from "../i18n/t.js";
+import { BUNDESLAENDER } from "../services/publicHolidays.js";
 import type { HolidayRequest } from "../db/repositories/requestRepo.js";
 
 interface CarryoverSettings {
@@ -6,7 +7,7 @@ interface CarryoverSettings {
   cutoff: string;
 }
 
-export function buildAdminPanelModal(lang: string, pendingRequests: HolidayRequest[], carryover?: CarryoverSettings) {
+export function buildAdminPanelModal(lang: string, pendingRequests: HolidayRequest[], carryover?: CarryoverSettings, bundesland?: string) {
   const blocks: any[] = [];
 
   // Pending requests section
@@ -39,6 +40,31 @@ export function buildAdminPanelModal(lang: string, pendingRequests: HolidayReque
       });
     }
   }
+
+  blocks.push({ type: "divider" });
+
+  // Bundesland setting
+  const bundeslandOptions = Object.entries(BUNDESLAENDER)
+    .sort(([, a], [, b]) => a.localeCompare(b, "de"))
+    .map(([code, name]) => ({
+      text: { type: "plain_text" as const, text: name },
+      value: code,
+    }));
+  const currentBundesland = bundeslandOptions.find((o) => o.value === bundesland);
+
+  blocks.push({
+    type: "input",
+    block_id: "bundesland_block",
+    optional: true,
+    element: {
+      type: "static_select",
+      action_id: "admin_bundesland",
+      placeholder: { type: "plain_text", text: t("admin.select_bundesland", lang) },
+      options: bundeslandOptions,
+      ...(currentBundesland ? { initial_option: currentBundesland } : {}),
+    },
+    label: { type: "plain_text", text: t("admin.bundesland", lang) },
+  });
 
   blocks.push({ type: "divider" });
 

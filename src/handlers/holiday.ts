@@ -2,11 +2,11 @@ import type { App } from "@slack/bolt";
 import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
-import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
 import { calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
+import { getHolidayDatesForYear, getPublicHolidaysForYear } from "../services/publicHolidays.js";
 import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
 
@@ -35,11 +35,11 @@ export function registerHolidayHandlers(app: App) {
     if (subcommand === "balance") {
       const db = getDb();
       const requestRepo = createRequestRepo(db);
-      const publicHolidayRepo = createPublicHolidayRepo(db);
       const settingsRepo = createSettingsRepo(db);
+      const bundesland = settingsRepo.getBundesland();
       const year = new Date().getFullYear();
       const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-      const publicHolidays = publicHolidayRepo.getDatesForYear(year);
+      const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
       const carryover = getEffectiveCarryover(
         user.carryoverDays,
         settingsRepo.isCarryoverEnabled(),
@@ -96,15 +96,16 @@ export function registerHolidayHandlers(app: App) {
 
     if (subcommand === "public") {
       const db = getDb();
-      const publicHolidayRepo = createPublicHolidayRepo(db);
+      const settingsRepo = createSettingsRepo(db);
+      const bundesland = settingsRepo.getBundesland();
       const year = new Date().getFullYear();
-      const holidays = publicHolidayRepo.getForYear(year);
 
-      if (holidays.length === 0) {
-        await sendDM(client, userId, t("holidays.empty", user.language, { year: String(year) }));
+      if (!bundesland) {
+        await sendDM(client, userId, t("holidays.no_bundesland", user.language));
         return;
       }
 
+      const holidays = await getPublicHolidaysForYear(year, bundesland);
       const lines = holidays.map((h) => {
         const name = user.language === "de" ? h.nameDe : h.name;
         return `• ${h.date} — ${name}`;

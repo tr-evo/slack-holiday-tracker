@@ -38,6 +38,7 @@ export function initializeSchema(db: Database.Database): void {
     INSERT OR IGNORE INTO settings (key, value) VALUES ('default_allowance', '30');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_enabled', 'false');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_cutoff', '03-31');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('bundesland', '');
   `);
 
   // Migration: add carryover_days column if missing

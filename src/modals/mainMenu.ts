@@ -51,11 +51,6 @@ export function buildMainMenuModal(lang: string, isAdmin: boolean) {
         },
         {
           type: "button",
-          text: { type: "plain_text", text: t("admin.import_holidays", lang) },
-          action_id: "open_import_holidays",
-        },
-        {
-          type: "button",
           text: { type: "plain_text", text: t("admin.manage_holidays", lang) },
           action_id: "open_manage_holidays",
         },

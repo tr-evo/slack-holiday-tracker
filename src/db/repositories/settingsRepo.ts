@@ -5,6 +5,7 @@ export interface SettingsRepo {
   set(key: string, value: string): void;
   isCarryoverEnabled(): boolean;
   getCarryoverCutoff(): string;
+  getBundesland(): string;
 }
 
 export function createSettingsRepo(db: Database.Database): SettingsRepo {
@@ -24,6 +25,10 @@ export function createSettingsRepo(db: Database.Database): SettingsRepo {
 
     getCarryoverCutoff() {
       return this.get("carryover_cutoff") ?? "03-31";
+    },
+
+    getBundesland() {
+      return this.get("bundesland") ?? "";
     },
   };
 }

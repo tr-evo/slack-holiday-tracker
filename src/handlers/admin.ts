@@ -3,10 +3,10 @@ import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { buildAdminPanelModal } from "../modals/adminPanel.js";
-import { buildBatchPastHolidayModal, parseDateRanges, buildNachtragenPreviewModal } from "../modals/batchPastHolidayModal.js";
+import { buildBatchPastHolidayModal, parseDateRanges, buildNachtragenPreviewModal, type PreviewEntry } from "../modals/batchPastHolidayModal.js";
 import { buildManageHolidaysPickerModal, buildHolidayListModal } from "../modals/manageHolidaysModal.js";
-import { buildImportHolidaysModal } from "../modals/importHolidaysModal.js";
-import { seedPublicHolidays, BUNDESLAENDER } from "../services/publicHolidays.js";
+import { BUNDESLAENDER, getHolidayDatesForYears } from "../services/publicHolidays.js";
+import { calculateRequestDays } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
@@ -57,7 +57,7 @@ export function registerAdminHandlers(app: App) {
 
     await client.views.push({
       trigger_id: (body as any).trigger_id,
-      view: buildAdminPanelModal(user.language, pending, getCarryoverSettings(db)),
+      view: buildAdminPanelModal(user.language, pending, getCarryoverSettings(db), createSettingsRepo(db).getBundesland()),
     });
   });
 
@@ -93,6 +93,13 @@ export function registerAdminHandlers(app: App) {
     if (cutoffValue) {
       const settingsRepo = createSettingsRepo(db);
       settingsRepo.set("carryover_cutoff", cutoffValue);
+    }
+
+    // Handle Bundesland setting
+    const bundeslandValue = values.bundesland_block?.admin_bundesland?.selected_option?.value;
+    if (bundeslandValue) {
+      const settingsRepo = createSettingsRepo(db);
+      settingsRepo.set("bundesland", bundeslandValue);
     }
 
     // Handle toggle admin
@@ -149,7 +156,7 @@ export function registerAdminHandlers(app: App) {
     if (viewId) {
       await client.views.update({
         view_id: viewId,
-        view: buildAdminPanelModal(admin.language, updatedPending, getCarryoverSettings(db)),
+        view: buildAdminPanelModal(admin.language, updatedPending, getCarryoverSettings(db), createSettingsRepo(db).getBundesland()),
       });
     }
   });
@@ -173,7 +180,7 @@ export function registerAdminHandlers(app: App) {
     if (viewId) {
       await client.views.update({
         view_id: viewId,
-        view: buildAdminPanelModal(admin.language, pending, getCarryoverSettings(db)),
+        view: buildAdminPanelModal(admin.language, pending, getCarryoverSettings(db), createSettingsRepo(db).getBundesland()),
       });
     }
   });
@@ -226,10 +233,22 @@ export function registerAdminHandlers(app: App) {
       return;
     }
 
+    const settingsRepo = createSettingsRepo(db);
+    const bundesland = settingsRepo.getBundesland();
+    const years = [...new Set(ranges.flatMap((r: any) => [
+      Number(r.startDate.slice(0, 4)),
+      Number(r.endDate.slice(0, 4)),
+    ]))];
+    const publicHolidays = bundesland ? await getHolidayDatesForYears(years, bundesland) : [];
+    const entries: PreviewEntry[] = ranges.map((range: any) => ({
+      range,
+      days: calculateRequestDays(range.startDate, range.endDate, false, false, publicHolidays),
+    }));
+
     const metadata = JSON.stringify({ userId: selectedUserId, ranges });
     await ack({
       response_action: "push",
-      view: buildNachtragenPreviewModal(admin.language, ranges, "batch_past_holiday_confirm", metadata),
+      view: buildNachtragenPreviewModal(admin.language, entries, "batch_past_holiday_confirm", metadata),
     } as any);
   });
 
@@ -266,54 +285,6 @@ export function registerAdminHandlers(app: App) {
       count: String(ranges.length),
       user: selectedUserId,
     }));
-  });
-
-  // Open "Import Public Holidays" modal (pushed from main menu at depth 1 → depth 2)
-  app.action("open_import_holidays", async ({ ack, body, client }) => {
-    await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) return;
-
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: buildImportHolidaysModal(admin.language),
-    });
-  });
-
-  // Handle "Import Public Holidays" submission
-  app.view("import_holidays_submit", async ({ ack, body, view, client }) => {
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) {
-      await ack();
-      return;
-    }
-
-    const values = view.state.values;
-    const bundesland = values.bundesland_block?.bundesland_select?.selected_option?.value;
-    const year = values.year_block?.year_select?.selected_option?.value;
-
-    if (!bundesland || !year) {
-      await ack();
-      return;
-    }
-
-    await ack();
-
-    try {
-      const count = await seedPublicHolidays(Number(year), bundesland);
-      const landName = BUNDESLAENDER[bundesland] ?? bundesland;
-      await sendDM(client, body.user.id, t("admin.holidays_imported", admin.language, {
-        count: String(count),
-        land: landName,
-        year,
-      }));
-    } catch {
-      await sendDM(client, body.user.id, t("error.generic", admin.language));
-    }
   });
 
   // Open "Manage Holidays" modal (user picker)

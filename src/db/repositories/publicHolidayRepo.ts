@@ -11,6 +11,7 @@ export interface PublicHolidayRepo {
   remove(date: string): void;
   getForYear(year: number): PublicHoliday[];
   getDatesForYear(year: number): string[];
+  getDatesForYears(years: number[]): string[];
 }
 
 export function createPublicHolidayRepo(db: Database.Database): PublicHolidayRepo {
@@ -39,6 +40,14 @@ export function createPublicHolidayRepo(db: Database.Database): PublicHolidayRep
       return db.prepare(
         "SELECT date FROM public_holidays WHERE strftime('%Y', date) = ? ORDER BY date"
       ).all(String(year)).map((row: any) => row.date);
+    },
+
+    getDatesForYears(years) {
+      if (years.length === 0) return [];
+      const placeholders = years.map(() => "?").join(",");
+      return db.prepare(
+        `SELECT date FROM public_holidays WHERE strftime('%Y', date) IN (${placeholders}) ORDER BY date`
+      ).all(...years.map(String)).map((row: any) => row.date);
     },
   };
 }

@@ -65,15 +65,24 @@ export function buildBatchPastHolidayModal(lang: string) {
   };
 }
 
+export interface PreviewEntry {
+  range: ParsedDateRange;
+  days: number;
+}
+
 export function buildNachtragenPreviewModal(
   lang: string,
-  ranges: ParsedDateRange[],
+  entries: PreviewEntry[],
   callbackId: string,
   privateMetadata: string
 ) {
-  const lines = ranges.map((r) =>
-    r.startDate === r.endDate ? `• ${r.startDate}` : `• ${r.startDate} → ${r.endDate}`
-  );
+  const totalDays = entries.reduce((sum, e) => sum + e.days, 0);
+  const lines = entries.map((e) => {
+    const dateStr = e.range.startDate === e.range.endDate
+      ? e.range.startDate
+      : `${e.range.startDate} → ${e.range.endDate}`;
+    return `• ${dateStr}  —  *${e.days}* ${t("nachtragen.days_unit", lang)}`;
+  });
   return {
     type: "modal" as const,
     callback_id: callbackId,
@@ -86,7 +95,7 @@ export function buildNachtragenPreviewModal(
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*${t("nachtragen.preview_count", lang, { count: String(ranges.length) })}*\n\n${lines.join("\n")}`,
+          text: `*${t("nachtragen.preview_count", lang, { count: String(entries.length) })}*\n\n${lines.join("\n")}\n\n*${t("nachtragen.preview_total", lang, { days: String(totalDays) })}*`,
         },
       },
     ],
