@@ -32,6 +32,7 @@ export interface RequestRepo {
   deleteById(id: number): void;
   getPending(): HolidayRequest[];
   getApprovedForUserInYear(userId: string, year: number): HolidayRequest[];
+  getUpcomingApproved(fromDate: string): HolidayRequest[];
 }
 
 function rowToRequest(row: any): HolidayRequest {
@@ -94,6 +95,14 @@ export function createRequestRepo(db: Database.Database): RequestRepo {
          AND strftime('%Y', start_date) = ?
          ORDER BY start_date ASC`
       ).all(userId, String(year)).map(rowToRequest);
+    },
+
+    getUpcomingApproved(fromDate) {
+      return db.prepare(
+        `SELECT * FROM holiday_requests
+         WHERE status = 'approved' AND end_date >= ?
+         ORDER BY start_date ASC`
+      ).all(fromDate).map(rowToRequest);
     },
   };
 }

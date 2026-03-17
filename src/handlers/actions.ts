@@ -8,6 +8,7 @@ import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
 import { buildUserNachtragenModal } from "../modals/batchPastHolidayModal.js";
+import { buildOverviewModal } from "../modals/overviewModal.js";
 import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
 
@@ -325,6 +326,53 @@ export function registerActionHandlers(app: App) {
         view: updatedModal,
       });
     }
+  });
+
+  // Admin: team overview
+  app.action("open_overview", async ({ ack, body, client }) => {
+    await ack();
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const requestRepo = createRequestRepo(db);
+    const publicHolidayRepo = createPublicHolidayRepo(db);
+    const settingsRepo = createSettingsRepo(db);
+
+    const admin = userRepo.findById(body.user.id);
+    if (!admin?.isAdmin) return;
+
+    const year = new Date().getFullYear();
+    const publicHolidays = publicHolidayRepo.getDatesForYear(year);
+    const carryoverEnabled = settingsRepo.isCarryoverEnabled();
+    const carryoverCutoff = settingsRepo.getCarryoverCutoff();
+
+    // Build balance for each user
+    const allUsers = userRepo.getAll();
+    const balances = allUsers.map((user) => {
+      const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
+      const carryover = getEffectiveCarryover(user.carryoverDays, carryoverEnabled, carryoverCutoff);
+      const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
+      const used = user.annualAllowance + carryover - remaining;
+      return { user, used, remaining, carryover };
+    });
+
+    // Get upcoming/current vacations (from today, next 3 months)
+    const today = new Date().toISOString().slice(0, 10);
+    const allUpcoming = requestRepo.getUpcomingApproved(today);
+    const threeMonthsOut = new Date();
+    threeMonthsOut.setMonth(threeMonthsOut.getMonth() + 3);
+    const cutoff = threeMonthsOut.toISOString().slice(0, 10);
+
+    const upcoming = allUpcoming
+      .filter((r) => r.startDate <= cutoff)
+      .map((r) => ({
+        request: r,
+        days: calculateRequestDays(r.startDate, r.endDate, r.halfDayStart, r.halfDayEnd, publicHolidays),
+      }));
+
+    await client.views.push({
+      trigger_id: (body as any).trigger_id,
+      view: buildOverviewModal(admin.language, balances, upcoming),
+    });
   });
 
   // Acknowledge half_days checkboxes action (no-op, values read on submit)
