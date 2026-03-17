@@ -58,6 +58,8 @@
   "admin.year": "Jahr",
   "admin.holidays_imported": "{count} Feiertage für {land} ({year}) importiert",
   "balance.carryover": "Übertrag: {days} Tage",
+  "balance.carryover_expires": "{days} Übertragstage verfallen am {date}",
+  "balance.carryover_expired": "{days} Übertragstage sind am {date} verfallen",
   "admin.carryover_section": "Urlaubsübertrag",
   "admin.carryover_enabled": "Übertrag aktiviert",
   "admin.carryover_cutoff": "Stichtag (MM-TT)",

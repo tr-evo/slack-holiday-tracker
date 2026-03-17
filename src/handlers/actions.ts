@@ -122,11 +122,20 @@ export function registerActionHandlers(app: App) {
     const used = user.annualAllowance + carryover - remaining;
     const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
 
+    const cutoff = settingsRepo.getCarryoverCutoff();
+    const carryoverUnused = carryover - breakdown.usedFromCarryover;
+    const cutoffDisplay = cutoff.split("-").reverse().join(".");
+
     const lines = [
       t("balance.total", user.language, { days: String(user.annualAllowance) }),
     ];
     if (carryover > 0) {
       lines.push(t("balance.carryover", user.language, { days: String(carryover) }));
+      if (carryoverUnused > 0) {
+        lines.push(`  └ ${t("balance.carryover_expires", user.language, { days: String(carryoverUnused), date: cutoffDisplay })}`);
+      }
+    } else if (user.carryoverDays > 0 && settingsRepo.isCarryoverEnabled()) {
+      lines.push(t("balance.carryover_expired", user.language, { days: String(user.carryoverDays), date: cutoffDisplay }));
     }
     lines.push(t("balance.used", user.language, { days: String(used) }));
     if (carryover > 0) {
