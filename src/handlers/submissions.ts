@@ -6,6 +6,7 @@ import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js
 import { calculateRequestDays, calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { parseDateRanges, buildNachtragenPreviewModal } from "../modals/batchPastHolidayModal.js";
+import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
 
 export function registerSubmissionHandlers(app: App) {
@@ -92,16 +93,10 @@ export function registerSubmissionHandlers(app: App) {
 
     if (isPast) {
       requestRepo.approve(requestId, userId, null);
-      await client.chat.postMessage({
-        channel: userId,
-        text: t("request.past_auto_approved", user.language, { start: startDate, end: endDate }),
-      });
+      await sendDM(client, userId, t("request.past_auto_approved", user.language, { start: startDate, end: endDate }));
     } else {
       // Notify user
-      await client.chat.postMessage({
-        channel: userId,
-        text: t("request.submitted", user.language),
-      });
+      await sendDM(client, userId, t("request.submitted", user.language));
 
       // Notify admins
       const admins = userRepo.getAdmins();
@@ -217,9 +212,6 @@ export function registerSubmissionHandlers(app: App) {
       requestRepo.approve(requestId, userId, null);
     }
 
-    await client.chat.postMessage({
-      channel: userId,
-      text: t("nachtragen.done", user.language, { count: String(ranges.length) }),
-    });
+    await sendDM(client, userId, t("nachtragen.done", user.language, { count: String(ranges.length) }));
   });
 }

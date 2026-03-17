@@ -74,7 +74,7 @@
   "nachtragen.confirm": "Confirm",
   "admin.manage_holidays": "Manage Holidays",
   "admin.delete_holiday": "Delete",
-  "admin.batch_past_holiday": "Batch Add Past Holidays",
+  "admin.batch_past_holiday": "Batch Past Holidays",
   "admin.batch_past_holiday_desc": "Add multiple past holidays for one user at once. Enter one date range per line in the format: YYYY-MM-DD to YYYY-MM-DD",
   "admin.batch_dates": "Date ranges (one per line)",
   "admin.batch_dates_placeholder": "2024-01-15 to 2024-01-19\n2024-03-01 to 2024-03-01",

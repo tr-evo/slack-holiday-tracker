@@ -7,6 +7,7 @@ import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
 import { calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
+import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
 
 function ensureUser(slackId: string, name: string) {
@@ -14,11 +15,6 @@ function ensureUser(slackId: string, name: string) {
   const userRepo = createUserRepo(db);
   userRepo.upsert({ slackId, name });
   return userRepo.findById(slackId)!;
-}
-
-async function sendDM(client: any, userId: string, text: string) {
-  const res = await client.conversations.open({ users: userId });
-  await client.chat.postMessage({ channel: res.channel.id, text });
 }
 
 export function registerHolidayHandlers(app: App) {

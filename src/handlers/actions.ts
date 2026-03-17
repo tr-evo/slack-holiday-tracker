@@ -8,6 +8,7 @@ import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
 import { buildUserNachtragenModal } from "../modals/batchPastHolidayModal.js";
+import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
 
 export function registerActionHandlers(app: App) {
@@ -26,13 +27,10 @@ export function registerActionHandlers(app: App) {
     const requester = userRepo.findById(request.userId);
 
     if (requester) {
-      await client.chat.postMessage({
-        channel: requester.slackId,
-        text: t("approval.approved", requester.language, {
-          start: request.startDate,
-          end: request.endDate,
-        }),
-      });
+      await sendDM(client, requester.slackId, t("approval.approved", requester.language, {
+        start: request.startDate,
+        end: request.endDate,
+      }));
     }
 
     // Update the admin's message to show it's been handled
@@ -59,13 +57,10 @@ export function registerActionHandlers(app: App) {
     const requester = userRepo.findById(request.userId);
 
     if (requester) {
-      await client.chat.postMessage({
-        channel: requester.slackId,
-        text: t("approval.rejected", requester.language, {
-          start: request.startDate,
-          end: request.endDate,
-        }),
-      });
+      await sendDM(client, requester.slackId, t("approval.rejected", requester.language, {
+        start: request.startDate,
+        end: request.endDate,
+      }));
     }
 
     await client.chat.update({

@@ -8,6 +8,7 @@ import { buildManageHolidaysPickerModal, buildHolidayListModal } from "../modals
 import { buildImportHolidaysModal } from "../modals/importHolidaysModal.js";
 import { seedPublicHolidays, BUNDESLAENDER } from "../services/publicHolidays.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
+import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
 
 async function fetchWorkspaceMembers(client: any): Promise<{ id: string; name: string }[]> {
@@ -135,13 +136,10 @@ export function registerAdminHandlers(app: App) {
       const requester = userRepo.findById(request.userId);
       if (requester) {
         const key = actionType === "approve" ? "approval.approved" : "approval.rejected";
-        await client.chat.postMessage({
-          channel: requester.slackId,
-          text: t(key, requester.language, {
-            start: request.startDate,
-            end: request.endDate,
-          }),
-        });
+        await sendDM(client, requester.slackId, t(key, requester.language, {
+          start: request.startDate,
+          end: request.endDate,
+        }));
       }
     }
 
@@ -264,13 +262,10 @@ export function registerAdminHandlers(app: App) {
       requestRepo.approve(requestId, body.user.id, null);
     }
 
-    await client.chat.postMessage({
-      channel: body.user.id,
-      text: t("admin.batch_past_holidays_added", admin.language, {
-        count: String(ranges.length),
-        user: selectedUserId,
-      }),
-    });
+    await sendDM(client, body.user.id, t("admin.batch_past_holidays_added", admin.language, {
+      count: String(ranges.length),
+      user: selectedUserId,
+    }));
   });
 
   // Open "Import Public Holidays" modal (pushed from main menu at depth 1 → depth 2)
@@ -311,19 +306,13 @@ export function registerAdminHandlers(app: App) {
     try {
       const count = await seedPublicHolidays(Number(year), bundesland);
       const landName = BUNDESLAENDER[bundesland] ?? bundesland;
-      await client.chat.postMessage({
-        channel: body.user.id,
-        text: t("admin.holidays_imported", admin.language, {
-          count: String(count),
-          land: landName,
-          year,
-        }),
-      });
+      await sendDM(client, body.user.id, t("admin.holidays_imported", admin.language, {
+        count: String(count),
+        land: landName,
+        year,
+      }));
     } catch {
-      await client.chat.postMessage({
-        channel: body.user.id,
-        text: t("error.generic", admin.language),
-      });
+      await sendDM(client, body.user.id, t("error.generic", admin.language));
     }
   });
 
