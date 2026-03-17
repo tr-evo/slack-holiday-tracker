@@ -65,6 +65,34 @@ export function buildBatchPastHolidayModal(lang: string) {
   };
 }
 
+export function buildNachtragenPreviewModal(
+  lang: string,
+  ranges: ParsedDateRange[],
+  callbackId: string,
+  privateMetadata: string
+) {
+  const lines = ranges.map((r) =>
+    r.startDate === r.endDate ? `• ${r.startDate}` : `• ${r.startDate} → ${r.endDate}`
+  );
+  return {
+    type: "modal" as const,
+    callback_id: callbackId,
+    private_metadata: privateMetadata,
+    title: { type: "plain_text" as const, text: t("nachtragen.preview_title", lang) },
+    submit: { type: "plain_text" as const, text: t("nachtragen.confirm", lang) },
+    close: { type: "plain_text" as const, text: "Back" },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${t("nachtragen.preview_count", lang, { count: String(ranges.length) })}*\n\n${lines.join("\n")}`,
+        },
+      },
+    ],
+  };
+}
+
 export interface ParsedDateRange {
   startDate: string;
   endDate: string;

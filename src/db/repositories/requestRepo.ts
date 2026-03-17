@@ -29,6 +29,7 @@ export interface RequestRepo {
   listByUser(userId: string): HolidayRequest[];
   approve(id: number, approvedBy: string, comment: string | null): void;
   reject(id: number, rejectedBy: string, comment: string | null): void;
+  deleteById(id: number): void;
   getPending(): HolidayRequest[];
   getApprovedForUserInYear(userId: string, year: number): HolidayRequest[];
 }
@@ -76,6 +77,10 @@ export function createRequestRepo(db: Database.Database): RequestRepo {
     reject(id, rejectedBy, comment) {
       db.prepare("UPDATE holiday_requests SET status = 'rejected', approved_by = ?, reviewer_comment = ? WHERE id = ?")
         .run(rejectedBy, comment, id);
+    },
+
+    deleteById(id) {
+      db.prepare("DELETE FROM holiday_requests WHERE id = ?").run(id);
     },
 
     getPending() {

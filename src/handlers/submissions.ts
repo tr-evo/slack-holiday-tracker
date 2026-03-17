@@ -5,7 +5,7 @@ import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { createPublicHolidayRepo } from "../db/repositories/publicHolidayRepo.js";
 import { calculateRequestDays, calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { parseDateRanges } from "../modals/batchPastHolidayModal.js";
+import { parseDateRanges, buildNachtragenPreviewModal } from "../modals/batchPastHolidayModal.js";
 import { t } from "../i18n/t.js";
 
 export function registerSubmissionHandlers(app: App) {
@@ -149,14 +149,12 @@ export function registerSubmissionHandlers(app: App) {
     }
   });
 
-  // User batch nachtragen — auto-approve all past date ranges
-  app.view("user_nachtragen_submit", async ({ ack, body, view, client }) => {
+  // User batch nachtragen — parse and show preview
+  app.view("user_nachtragen_submit", async ({ ack, body, view }) => {
     const db = getDb();
     const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
 
-    const userId = body.user.id;
-    const user = userRepo.findById(userId);
+    const user = userRepo.findById(body.user.id);
     if (!user) {
       await ack();
       return;
@@ -177,13 +175,34 @@ export function registerSubmissionHandlers(app: App) {
         response_action: "errors",
         errors: {
           batch_dates_block: errors
-            .map((line) => t("admin.batch_parse_error", user.language, { line }))
+            .map((line: string) => t("admin.batch_parse_error", user.language, { line }))
             .join("; "),
         },
       });
       return;
     }
 
+    const metadata = JSON.stringify({ ranges });
+    await ack({
+      response_action: "push",
+      view: buildNachtragenPreviewModal(user.language, ranges, "user_nachtragen_confirm", metadata),
+    } as any);
+  });
+
+  // User nachtragen confirm — actually create the entries
+  app.view("user_nachtragen_confirm", async ({ ack, body, view, client }) => {
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const requestRepo = createRequestRepo(db);
+
+    const userId = body.user.id;
+    const user = userRepo.findById(userId);
+    if (!user) {
+      await ack();
+      return;
+    }
+
+    const { ranges } = JSON.parse(view.private_metadata);
     await ack();
 
     for (const range of ranges) {

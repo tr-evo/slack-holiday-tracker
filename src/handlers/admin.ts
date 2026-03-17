@@ -3,7 +3,8 @@ import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { buildAdminPanelModal } from "../modals/adminPanel.js";
-import { buildBatchPastHolidayModal, parseDateRanges } from "../modals/batchPastHolidayModal.js";
+import { buildBatchPastHolidayModal, parseDateRanges, buildNachtragenPreviewModal } from "../modals/batchPastHolidayModal.js";
+import { buildManageHolidaysPickerModal, buildHolidayListModal } from "../modals/manageHolidaysModal.js";
 import { buildImportHolidaysModal } from "../modals/importHolidaysModal.js";
 import { seedPublicHolidays, BUNDESLAENDER } from "../services/publicHolidays.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
@@ -193,11 +194,10 @@ export function registerAdminHandlers(app: App) {
     });
   });
 
-  // Handle "Batch Add Past Holidays" submission
-  app.view("batch_past_holiday_submit", async ({ ack, body, view, client }) => {
+  // Handle "Batch Add Past Holidays" submission — show preview
+  app.view("batch_past_holiday_submit", async ({ ack, body, view }) => {
     const db = getDb();
     const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
 
     const admin = userRepo.findById(body.user.id);
     if (!admin?.isAdmin) {
@@ -228,12 +228,30 @@ export function registerAdminHandlers(app: App) {
       return;
     }
 
+    const metadata = JSON.stringify({ userId: selectedUserId, ranges });
+    await ack({
+      response_action: "push",
+      view: buildNachtragenPreviewModal(admin.language, ranges, "batch_past_holiday_confirm", metadata),
+    } as any);
+  });
+
+  // Admin batch confirm — actually create the entries
+  app.view("batch_past_holiday_confirm", async ({ ack, body, view, client }) => {
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const requestRepo = createRequestRepo(db);
+
+    const admin = userRepo.findById(body.user.id);
+    if (!admin?.isAdmin) {
+      await ack();
+      return;
+    }
+
+    const { userId: selectedUserId, ranges } = JSON.parse(view.private_metadata);
     await ack();
 
-    // Ensure user exists
     userRepo.upsert({ slackId: selectedUserId, name: selectedUserId });
 
-    // Create and auto-approve each entry
     for (const range of ranges) {
       const requestId = requestRepo.create({
         userId: selectedUserId,
@@ -305,6 +323,73 @@ export function registerAdminHandlers(app: App) {
       await client.chat.postMessage({
         channel: body.user.id,
         text: t("error.generic", admin.language),
+      });
+    }
+  });
+
+  // Open "Manage Holidays" modal (user picker)
+  app.options("manage_user_select", handleUserOptions);
+  app.action("open_manage_holidays", async ({ ack, body, client }) => {
+    await ack();
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const admin = userRepo.findById(body.user.id);
+    if (!admin?.isAdmin) return;
+
+    await client.views.push({
+      trigger_id: (body as any).trigger_id,
+      view: buildManageHolidaysPickerModal(admin.language),
+    });
+  });
+
+  // Handle user picker submit — show holiday list
+  app.view("manage_holidays_pick_user", async ({ ack, body, view }) => {
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const requestRepo = createRequestRepo(db);
+
+    const admin = userRepo.findById(body.user.id);
+    if (!admin?.isAdmin) {
+      await ack();
+      return;
+    }
+
+    const selectedUserId = view.state.values.manage_user_block?.manage_user_select?.selected_option?.value;
+    if (!selectedUserId) {
+      await ack();
+      return;
+    }
+
+    const holidays = requestRepo.listByUser(selectedUserId);
+    await ack({
+      response_action: "push",
+      view: buildHolidayListModal(admin.language, selectedUserId, holidays),
+    } as any);
+  });
+
+  // Handle delete holiday from manage list
+  app.action(/^manage_holiday_action_\d+$/, async ({ ack, action, body, client }) => {
+    await ack();
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const requestRepo = createRequestRepo(db);
+
+    const admin = userRepo.findById(body.user.id);
+    if (!admin?.isAdmin) return;
+
+    const selectedValue = (action as any).selected_option?.value as string;
+    if (!selectedValue?.startsWith("delete_")) return;
+
+    const requestId = Number(selectedValue.split("_")[1]);
+    requestRepo.deleteById(requestId);
+
+    // Refresh the list
+    const userId = (body as any).view?.private_metadata;
+    if (userId) {
+      const holidays = requestRepo.listByUser(userId);
+      await client.views.update({
+        view_id: (body as any).view.id,
+        view: buildHolidayListModal(admin.language, userId, holidays),
       });
     }
   });
