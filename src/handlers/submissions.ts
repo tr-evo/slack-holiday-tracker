@@ -2,7 +2,7 @@ import type { App } from "@slack/bolt";
 import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
-import { calculateRequestDays, calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
+import { calculateRequestDays, calculateRemainingDays, calculateCarryoverFromPreviousYear, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { getHolidayDatesForYears } from "../services/publicHolidays.js";
 import { parseDateRanges, buildNachtragenPreviewModal, type PreviewEntry } from "../modals/batchPastHolidayModal.js";
@@ -43,16 +43,23 @@ export function registerSubmissionHandlers(app: App) {
 
     // Check remaining allowance — fetch holidays for all relevant years (handles cross-year requests)
     const year = new Date().getFullYear();
+    const prevYear = year - 1;
     const requestYears = [...new Set([
       Number(startDate.slice(0, 4)),
       Number(endDate.slice(0, 4)),
       year,
+      prevYear,
     ])];
     const publicHolidays = bundesland ? await getHolidayDatesForYears(requestYears, bundesland) : [];
     const requestedDays = calculateRequestDays(startDate, endDate, halfDayStart, halfDayEnd, publicHolidays);
     const approved = requestRepo.getApprovedForUserInYear(userId, year);
+    // Auto-calculate carryover from previous year's unused days
+    const prevApproved = requestRepo.getApprovedForUserInYear(userId, prevYear);
+    const carryoverDays = calculateCarryoverFromPreviousYear(
+      user.annualAllowance, prevApproved, publicHolidays, user.carryoverDays
+    );
     const carryover = getEffectiveCarryover(
-      user.carryoverDays,
+      carryoverDays,
       settingsRepo.isCarryoverEnabled(),
       settingsRepo.getCarryoverCutoff()
     );

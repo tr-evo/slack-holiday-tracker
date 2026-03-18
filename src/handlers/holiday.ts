@@ -4,7 +4,7 @@ import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
-import { calculateRemainingDays, calculateUsageBreakdown, getEffectiveCarryover } from "../services/allowance.js";
+import { calculateRemainingDays, calculateUsageBreakdown, calculateCarryoverFromPreviousYear, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { getHolidayDatesForYear, getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
 import { sendDM } from "../services/slack.js";
@@ -45,9 +45,18 @@ export function registerHolidayHandlers(app: App) {
         Number(r.endDate.slice(0, 4)),
       ]))];
       if (!approvedYears.includes(year)) approvedYears.push(year);
+      // Also fetch previous year holidays for carryover calculation
+      const prevYear = year - 1;
+      if (!approvedYears.includes(prevYear)) approvedYears.push(prevYear);
       const publicHolidays = bundesland ? await getHolidayDatesForYears(approvedYears, bundesland) : [];
+
+      // Auto-calculate carryover from previous year's unused days
+      const prevApproved = requestRepo.getApprovedForUserInYear(user.slackId, prevYear);
+      const carryoverDays = calculateCarryoverFromPreviousYear(
+        user.annualAllowance, prevApproved, publicHolidays, user.carryoverDays
+      );
       const carryover = getEffectiveCarryover(
-        user.carryoverDays,
+        carryoverDays,
         settingsRepo.isCarryoverEnabled(),
         settingsRepo.getCarryoverCutoff()
       );
@@ -73,8 +82,8 @@ export function registerHolidayHandlers(app: App) {
       if (carryover > 0) {
         lines.push(`+ ${t("balance.carryover", lang, { days: String(carryover) })}`);
         lines.push(`= *${t("balance.budget_total", lang, { days: String(user.annualAllowance + carryover) })}*`);
-      } else if (user.carryoverDays > 0 && settingsRepo.isCarryoverEnabled()) {
-        lines.push(`~${t("balance.carryover", lang, { days: String(user.carryoverDays) })}~ _(${t("balance.carryover_expired", lang, { days: String(user.carryoverDays), date: cutoffDisplay })})_`);
+      } else if (carryoverDays > 0 && settingsRepo.isCarryoverEnabled()) {
+        lines.push(`~${t("balance.carryover", lang, { days: String(carryoverDays) })}~ _(${t("balance.carryover_expired", lang, { days: String(carryoverDays), date: cutoffDisplay })})_`);
       }
 
       // --- Usage section ---

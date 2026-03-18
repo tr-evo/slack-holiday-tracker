@@ -2,7 +2,7 @@ import type { App } from "@slack/bolt";
 import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
-import { calculateRemainingDays, getEffectiveCarryover, calculateUsageBreakdown, calculateRequestDays } from "../services/allowance.js";
+import { calculateRemainingDays, getEffectiveCarryover, calculateUsageBreakdown, calculateRequestDays, calculateCarryoverFromPreviousYear } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import { getHolidayDatesForYear, getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
@@ -118,9 +118,18 @@ export function registerActionHandlers(app: App) {
       Number(r.endDate.slice(0, 4)),
     ]))];
     if (!approvedYears.includes(year)) approvedYears.push(year);
+    // Also fetch previous year holidays for carryover calculation
+    const prevYear = year - 1;
+    if (!approvedYears.includes(prevYear)) approvedYears.push(prevYear);
     const publicHolidays = bundesland ? await getHolidayDatesForYears(approvedYears, bundesland) : [];
+
+    // Auto-calculate carryover from previous year's unused days
+    const prevApproved = requestRepo.getApprovedForUserInYear(user.slackId, prevYear);
+    const carryoverDays = calculateCarryoverFromPreviousYear(
+      user.annualAllowance, prevApproved, publicHolidays, user.carryoverDays
+    );
     const carryover = getEffectiveCarryover(
-      user.carryoverDays,
+      carryoverDays,
       settingsRepo.isCarryoverEnabled(),
       settingsRepo.getCarryoverCutoff()
     );
@@ -141,8 +150,8 @@ export function registerActionHandlers(app: App) {
     if (carryover > 0) {
       lines.push(`+ ${t("balance.carryover", lang, { days: String(carryover) })}`);
       lines.push(`= *${t("balance.budget_total", lang, { days: String(user.annualAllowance + carryover) })}*`);
-    } else if (user.carryoverDays > 0 && settingsRepo.isCarryoverEnabled()) {
-      lines.push(`~${t("balance.carryover", lang, { days: String(user.carryoverDays) })}~ _(${t("balance.carryover_expired", lang, { days: String(user.carryoverDays), date: cutoffDisplay })})_`);
+    } else if (carryoverDays > 0 && settingsRepo.isCarryoverEnabled()) {
+      lines.push(`~${t("balance.carryover", lang, { days: String(carryoverDays) })}~ _(${t("balance.carryover_expired", lang, { days: String(carryoverDays), date: cutoffDisplay })})_`);
     }
 
     // --- Usage section ---
@@ -203,12 +212,18 @@ export function registerActionHandlers(app: App) {
       Number(r.endDate.slice(0, 4)),
     ]))];
     if (!allYears.includes(year)) allYears.push(year);
+    const prevYear = year - 1;
+    if (!allYears.includes(prevYear)) allYears.push(prevYear);
     const publicHolidays = bundesland ? await getHolidayDatesForYears(allYears, bundesland) : [];
 
     // Calculate source breakdown for approved requests
     const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
+    const prevApproved = requestRepo.getApprovedForUserInYear(user.slackId, prevYear);
+    const carryoverDays = calculateCarryoverFromPreviousYear(
+      user.annualAllowance, prevApproved, publicHolidays, user.carryoverDays
+    );
     const carryover = getEffectiveCarryover(
-      user.carryoverDays,
+      carryoverDays,
       settingsRepo.isCarryoverEnabled(),
       settingsRepo.getCarryoverCutoff()
     );
@@ -388,11 +403,17 @@ export function registerActionHandlers(app: App) {
       Number(r.endDate.slice(0, 4)),
     ]))];
     if (!overviewYears.includes(year)) overviewYears.push(year);
+    const prevYear = year - 1;
+    if (!overviewYears.includes(prevYear)) overviewYears.push(prevYear);
     const publicHolidays = bundesland ? await getHolidayDatesForYears(overviewYears, bundesland) : [];
 
     const balances = allUsers.map((user) => {
       const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-      const carryover = getEffectiveCarryover(user.carryoverDays, carryoverEnabled, carryoverCutoff);
+      const prevApproved = requestRepo.getApprovedForUserInYear(user.slackId, prevYear);
+      const carryoverDays = calculateCarryoverFromPreviousYear(
+        user.annualAllowance, prevApproved, publicHolidays, user.carryoverDays
+      );
+      const carryover = getEffectiveCarryover(carryoverDays, carryoverEnabled, carryoverCutoff);
       const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
       const used = user.annualAllowance + carryover - remaining;
       return { user, used, remaining, carryover };

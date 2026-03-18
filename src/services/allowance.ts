@@ -113,6 +113,36 @@ export function calculateUsageBreakdown(
 }
 
 /**
+ * Auto-calculate carryover from previous year's unused allowance.
+ * Carryover = previous year's allowance - days used in previous year.
+ * Falls back to manual carryoverDays if no previous year requests exist
+ * (useful for the first year the system is in use).
+ */
+export function calculateCarryoverFromPreviousYear(
+  annualAllowance: number,
+  previousYearApproved: ApprovedRequest[],
+  publicHolidays: string[],
+  manualCarryoverDays: number = 0
+): number {
+  if (previousYearApproved.length === 0) {
+    return manualCarryoverDays;
+  }
+
+  let used = 0;
+  for (const req of previousYearApproved) {
+    used += calculateRequestDays(
+      req.startDate,
+      req.endDate,
+      req.halfDayStart,
+      req.halfDayEnd,
+      publicHolidays
+    );
+  }
+
+  return Math.max(0, annualAllowance - used);
+}
+
+/**
  * Returns the effective carryover days for a user right now.
  * Returns 0 if carryover is disabled or past the cutoff date.
  */

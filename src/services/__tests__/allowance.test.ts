@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { countBusinessDays, calculateRequestDays, calculateRemainingDays } from "../allowance.js";
+import { countBusinessDays, calculateRequestDays, calculateRemainingDays, calculateCarryoverFromPreviousYear } from "../allowance.js";
 
 describe("countBusinessDays", () => {
   it("counts weekdays only", () => {
@@ -115,5 +115,49 @@ describe("calculateRemainingDays", () => {
     ];
     // Without Dec 25+26 holidays, it counts 9 instead of 7 days => 21 remaining instead of 23
     expect(calculateRemainingDays(30, approved, holidays2025Only)).toBe(21);
+  });
+});
+
+describe("calculateCarryoverFromPreviousYear", () => {
+  it("calculates unused days from previous year as carryover", () => {
+    // User had 28 days allowance, used 21 => 7 days carryover
+    const prevApproved = [
+      { startDate: "2025-03-10", endDate: "2025-03-14", halfDayStart: false, halfDayEnd: false }, // 5 days
+      { startDate: "2025-06-02", endDate: "2025-06-13", halfDayStart: false, halfDayEnd: false }, // 10 days
+      { startDate: "2025-09-01", endDate: "2025-09-05", halfDayStart: false, halfDayEnd: false }, // 5 days
+      { startDate: "2025-12-22", endDate: "2025-12-22", halfDayStart: true, halfDayEnd: false },  // 0.5 days
+    ];
+    // 20.5 days used from 28 => 7.5 carryover
+    expect(calculateCarryoverFromPreviousYear(28, prevApproved, [])).toBe(7.5);
+  });
+
+  it("returns 0 when all days were used", () => {
+    const prevApproved = [
+      { startDate: "2025-01-06", endDate: "2025-01-31", halfDayStart: false, halfDayEnd: false }, // 20 days
+      { startDate: "2025-06-02", endDate: "2025-06-13", halfDayStart: false, halfDayEnd: false }, // 10 days
+    ];
+    expect(calculateCarryoverFromPreviousYear(30, prevApproved, [])).toBe(0);
+  });
+
+  it("falls back to manual carryoverDays when no previous year requests exist", () => {
+    // First year of system use — no data from previous year
+    expect(calculateCarryoverFromPreviousYear(28, [], [], 7)).toBe(7);
+  });
+
+  it("uses auto-calculated value even when manual override exists (if prev year has data)", () => {
+    const prevApproved = [
+      { startDate: "2025-03-10", endDate: "2025-03-14", halfDayStart: false, halfDayEnd: false }, // 5 days
+    ];
+    // 28 - 5 = 23, ignores manual value of 7
+    expect(calculateCarryoverFromPreviousYear(28, prevApproved, [], 7)).toBe(23);
+  });
+
+  it("excludes public holidays from previous year calculation", () => {
+    // Request covers a public holiday
+    const prevApproved = [
+      { startDate: "2025-12-22", endDate: "2025-12-26", halfDayStart: false, halfDayEnd: false }, // 5 weekdays - 2 holidays = 3 days
+    ];
+    const holidays = ["2025-12-25", "2025-12-26"];
+    expect(calculateCarryoverFromPreviousYear(28, prevApproved, holidays)).toBe(25);
   });
 });
