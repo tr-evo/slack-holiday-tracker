@@ -4,9 +4,9 @@ import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
 import { buildRequestModal } from "../modals/requestModal.js";
-import { calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
+import { calculateRemainingDays, calculateUsageBreakdown, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { getHolidayDatesForYear, getPublicHolidaysForYear } from "../services/publicHolidays.js";
+import { getHolidayDatesForYear, getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
 import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
 
@@ -39,7 +39,13 @@ export function registerHolidayHandlers(app: App) {
       const bundesland = settingsRepo.getBundesland();
       const year = new Date().getFullYear();
       const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-      const publicHolidays = bundesland ? await getHolidayDatesForYear(year, bundesland) : [];
+      // Fetch holidays for all years the approved requests span (handles cross-year requests)
+      const approvedYears = [...new Set(approved.flatMap((r) => [
+        Number(r.startDate.slice(0, 4)),
+        Number(r.endDate.slice(0, 4)),
+      ]))];
+      if (!approvedYears.includes(year)) approvedYears.push(year);
+      const publicHolidays = bundesland ? await getHolidayDatesForYears(approvedYears, bundesland) : [];
       const carryover = getEffectiveCarryover(
         user.carryoverDays,
         settingsRepo.isCarryoverEnabled(),
@@ -49,22 +55,45 @@ export function registerHolidayHandlers(app: App) {
       const used = user.annualAllowance + carryover - remaining;
 
       const cutoff = settingsRepo.getCarryoverCutoff();
-      const cutoffDisplay = cutoff.split("-").reverse().join(".");
+      const [cutoffMonth, cutoffDay] = cutoff.split("-");
+      const cutoffDisplay = `${cutoffDay}.${cutoffMonth}.${year}`;
 
-      const lines = [
-        `*${t("balance.title", user.language)}*`,
-        t("balance.total", user.language, { days: String(user.annualAllowance) }),
-      ];
+      // Calculate unused carryover (consistent with modal view)
+      const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
+      const carryoverUnused = carryover - breakdown.usedFromCarryover;
+
+      const lang = user.language;
+      const lines: string[] = [];
+
+      lines.push(`*${t("balance.title", lang)} ${year}*`);
+      lines.push("");
+
+      // --- Budget section ---
+      lines.push(t("balance.total", lang, { days: String(user.annualAllowance) }));
       if (carryover > 0) {
-        lines.push(t("balance.carryover", user.language, { days: String(carryover) }));
-        lines.push(`  └ ${t("balance.carryover_expires", user.language, { days: String(carryover), date: cutoffDisplay })}`);
+        lines.push(`+ ${t("balance.carryover", lang, { days: String(carryover) })}`);
+        lines.push(`= *${t("balance.budget_total", lang, { days: String(user.annualAllowance + carryover) })}*`);
       } else if (user.carryoverDays > 0 && settingsRepo.isCarryoverEnabled()) {
-        lines.push(t("balance.carryover_expired", user.language, { days: String(user.carryoverDays), date: cutoffDisplay }));
+        lines.push(`~${t("balance.carryover", lang, { days: String(user.carryoverDays) })}~ _(${t("balance.carryover_expired", lang, { days: String(user.carryoverDays), date: cutoffDisplay })})_`);
       }
-      lines.push(
-        t("balance.used", user.language, { days: String(used) }),
-        t("balance.remaining", user.language, { days: String(remaining) }),
-      );
+
+      // --- Usage section ---
+      lines.push("");
+      lines.push(t("balance.used", lang, { days: String(used) }));
+      if (carryover > 0 && used > 0) {
+        lines.push(`  └ ${t("balance.used_from_carryover", lang, { days: String(breakdown.usedFromCarryover) })}`);
+        lines.push(`  └ ${t("balance.used_from_allowance", lang, { days: String(breakdown.usedFromAllowance) })}`);
+      }
+
+      // --- Remaining ---
+      lines.push("");
+      lines.push(`*${t("balance.remaining", lang, { days: String(remaining) })}*`);
+
+      // --- Carryover warning (prominent, at bottom) ---
+      if (carryover > 0 && carryoverUnused > 0) {
+        lines.push("");
+        lines.push(`:warning: *${t("balance.carryover_warning", lang, { days: String(carryoverUnused), date: cutoffDisplay })}*`);
+      }
 
       await sendDM(client, userId, lines.join("\n"));
       return;

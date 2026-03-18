@@ -53,6 +53,17 @@ describe("calculateRequestDays", () => {
     expect(calculateRequestDays("2026-03-09", "2026-03-09", true, false, [])).toBe(0.5);
   });
 
+  it("single day with both half days = full day", () => {
+    // Users interpret "start half" as morning and "end half" as afternoon
+    // Both checked on a single day = full day
+    expect(calculateRequestDays("2026-03-09", "2026-03-09", true, true, [])).toBe(1);
+  });
+
+  it("multi-day with both half days still subtracts correctly", () => {
+    // Mon-Fri, first day half + last day half = 4 days
+    expect(calculateRequestDays("2026-03-09", "2026-03-13", true, true, [])).toBe(4);
+  });
+
   it("returns 0 for weekend-only range", () => {
     expect(calculateRequestDays("2026-03-14", "2026-03-15", false, false, [])).toBe(0);
   });
