@@ -41,26 +41,16 @@ export function registerSubmissionHandlers(app: App) {
       return;
     }
 
-    // Validate half-day options for single-day requests
-    if (startDate === endDate && halfDayStart && halfDayEnd) {
-      await ack({
-        response_action: "errors",
-        errors: { half_days_block: t("request.half_day_single_day_error", user.language) },
-      });
-      return;
-    }
-
-    // Check remaining allowance
+    // Check remaining allowance — fetch holidays for all relevant years (handles cross-year requests)
     const year = new Date().getFullYear();
-    // Collect all years from this request + approved requests for correct holiday exclusion
-    const requestYears = new Set([Number(startDate.slice(0, 4)), Number(endDate.slice(0, 4))]);
-    const approved = requestRepo.getApprovedForUserInYear(userId, year);
-    for (const req of approved) {
-      requestYears.add(Number(req.startDate.slice(0, 4)));
-      requestYears.add(Number(req.endDate.slice(0, 4)));
-    }
-    const publicHolidays = bundesland ? await getHolidayDatesForYears([...requestYears], bundesland) : [];
+    const requestYears = [...new Set([
+      Number(startDate.slice(0, 4)),
+      Number(endDate.slice(0, 4)),
+      year,
+    ])];
+    const publicHolidays = bundesland ? await getHolidayDatesForYears(requestYears, bundesland) : [];
     const requestedDays = calculateRequestDays(startDate, endDate, halfDayStart, halfDayEnd, publicHolidays);
+    const approved = requestRepo.getApprovedForUserInYear(userId, year);
     const carryover = getEffectiveCarryover(
       user.carryoverDays,
       settingsRepo.isCarryoverEnabled(),

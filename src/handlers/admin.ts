@@ -83,8 +83,9 @@ export function registerAdminHandlers(app: App) {
     }
 
     // Handle carryover days for selected user
+    // Guard against empty string from Slack (optional number_input can return "" instead of null)
     const carryoverDays = values.carryover_days_block?.admin_carryover_days?.value;
-    if (selectedUserId && carryoverDays != null) {
+    if (selectedUserId && carryoverDays != null && carryoverDays !== "") {
       userRepo.setCarryoverDays(selectedUserId, Number(carryoverDays));
     }
 

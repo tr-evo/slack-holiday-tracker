@@ -28,8 +28,12 @@ export function calculateRequestDays(
   publicHolidays: string[]
 ): number {
   let days = countBusinessDays(startDate, endDate, publicHolidays);
-  if (halfDayStart && days > 0) days -= 0.5;
-  if (halfDayEnd && days > 0) days -= 0.5;
+  // Both halves on a single day = full day (users think "morning" + "afternoon")
+  const bothOnSameDay = startDate === endDate && halfDayStart && halfDayEnd;
+  if (!bothOnSameDay) {
+    if (halfDayStart && days > 0) days -= 0.5;
+    if (halfDayEnd && days > 0) days -= 0.5;
+  }
   return Math.max(0, days);
 }
 
