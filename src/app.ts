@@ -5,6 +5,7 @@ import { registerHolidayHandlers } from "./handlers/holiday.js";
 import { registerActionHandlers } from "./handlers/actions.js";
 import { registerSubmissionHandlers } from "./handlers/submissions.js";
 import { registerAdminHandlers } from "./handlers/admin.js";
+import { registerHomeHandlers } from "./handlers/views.js";
 
 // Initialize database on startup
 getDb();
@@ -20,6 +21,17 @@ registerHolidayHandlers(app);
 registerActionHandlers(app);
 registerSubmissionHandlers(app);
 registerAdminHandlers(app);
+registerHomeHandlers(app);
+
+// A thrown listener would otherwise surface as an unhandled rejection, which
+// Node turns into a process exit — one bad interaction killing the whole bot.
+app.error(async (error) => {
+  console.error("[bolt] unhandled listener error:", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] unhandled rejection:", reason);
+});
 
 (async () => {
   await app.start();

@@ -36,18 +36,29 @@ export function buildMainMenuModal(lang: string, isAdmin: boolean) {
   ];
 
   if (isAdmin) {
+    blocks.push({ type: "divider" });
     blocks.push({
       type: "actions",
       elements: [
         {
           type: "button",
-          text: { type: "plain_text", text: t("menu.admin", lang) },
-          action_id: "open_admin_panel",
+          text: { type: "plain_text", text: t("admin.approvals", lang) },
+          action_id: "open_admin_approvals",
         },
         {
           type: "button",
-          text: { type: "plain_text", text: t("admin.batch_past_holiday", lang) },
-          action_id: "open_batch_past_holiday",
+          text: { type: "plain_text", text: t("admin.people", lang) },
+          action_id: "open_admin_people",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: t("admin.settings", lang) },
+          action_id: "open_admin_settings",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: t("overview.title", lang) },
+          action_id: "open_overview",
         },
         {
           type: "button",
@@ -56,8 +67,8 @@ export function buildMainMenuModal(lang: string, isAdmin: boolean) {
         },
         {
           type: "button",
-          text: { type: "plain_text", text: t("overview.title", lang) },
-          action_id: "open_overview",
+          text: { type: "plain_text", text: t("admin.batch_past_holiday", lang) },
+          action_id: "open_batch_past_holiday",
         },
       ],
     });
@@ -77,7 +88,7 @@ export function buildMainMenuModal(lang: string, isAdmin: boolean) {
   return {
     type: "modal" as const,
     title: { type: "plain_text" as const, text: t("menu.title", lang) },
-    close: { type: "plain_text" as const, text: "Close" },
+    close: { type: "plain_text" as const, text: t("common.close", lang) },
     blocks,
   };
 }

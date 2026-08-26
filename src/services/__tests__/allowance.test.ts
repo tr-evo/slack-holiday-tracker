@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { countBusinessDays, calculateRequestDays, calculateRemainingDays } from "../allowance.js";
 
 describe("countBusinessDays", () => {
@@ -83,4 +83,32 @@ describe("calculateRemainingDays", () => {
   it("returns full allowance with no requests", () => {
     expect(calculateRemainingDays(30, [], [])).toBe(30);
   });
+});
+
+describe("countBusinessDays — timezone independence", () => {
+  const originalTz = process.env.TZ;
+  afterEach(() => {
+    process.env.TZ = originalTz;
+  });
+
+  // Regression: dates were parsed as local midnight and formatted back with
+  // toISOString(), shifting every public holiday one day in any zone ahead of
+  // UTC — so in Europe/Berlin, Neujahr was billed as leave and 2 Jan was free.
+  for (const tz of ["Europe/Berlin", "UTC", "America/New_York", "Pacific/Auckland"]) {
+    it(`matches public holidays correctly in ${tz}`, () => {
+      process.env.TZ = tz;
+      const neujahr = ["2026-01-01"]; // a Thursday
+      expect(countBusinessDays("2026-01-01", "2026-01-01", neujahr)).toBe(0);
+      expect(countBusinessDays("2026-01-02", "2026-01-02", neujahr)).toBe(1);
+      // Thu 1 Jan (holiday) → Fri 2 Jan
+      expect(countBusinessDays("2026-01-01", "2026-01-02", neujahr)).toBe(1);
+    });
+
+    it(`counts weekends correctly in ${tz}`, () => {
+      process.env.TZ = tz;
+      // Sat 2026-03-14 / Sun 2026-03-15
+      expect(countBusinessDays("2026-03-14", "2026-03-15", [])).toBe(0);
+      expect(countBusinessDays("2026-03-09", "2026-03-15", [])).toBe(5);
+    });
+  }
 });

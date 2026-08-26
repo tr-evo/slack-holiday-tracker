@@ -21,18 +21,38 @@
    - `im:write` — DM users
    - `users:read` — read user info
 
+   The Home tab needs no extra scope beyond these.
+
 ## 4. Create Slash Command
 
 1. Go to **Features** > **Slash Commands**
 2. Click **Create New Command**
    - Command: `/holiday`
    - Description: "Open the holiday tracker"
-   - Usage hint: `[request | balance | list]`
+   - Usage hint: `[request | balance | list | public | help]`
 
 ## 5. Enable Interactivity
 
 1. Go to **Features** > **Interactivity & Shortcuts**
 2. Toggle **Interactivity** on (no URL needed for Socket Mode)
+
+## 5a. Enable the Home tab — required
+
+The Home tab is where the app lives: balance, your requests, who else is off,
+and the admin queue, all without typing a command. It needs two switches in the
+Slack app config, and **it silently does not appear if either is missing**.
+
+1. Go to **Features** > **App Home**
+   - Toggle **Home Tab** on
+   - Under *Show Tabs*, leave **Messages Tab** on as well (the bot DMs decisions)
+2. Go to **Features** > **Event Subscriptions**
+   - Toggle **Enable Events** on (no Request URL needed with Socket Mode)
+   - Under **Subscribe to bot events**, add `app_home_opened`
+3. Reinstall the app if Slack prompts you to
+
+To check it worked: open the app from your Slack sidebar. You should see a
+**Home** tab with your balance. If the tab is missing, the toggle in step 1 is
+off; if the tab is blank, the event in step 2 was not added.
 
 ## 6. Install to Workspace
 

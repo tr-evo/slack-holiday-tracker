@@ -5,16 +5,19 @@ export function countBusinessDays(
 ): number {
   const holidaySet = new Set(publicHolidays);
   let count = 0;
-  const current = new Date(startDate + "T00:00:00");
-  const end = new Date(endDate + "T00:00:00");
+  // Iterate in UTC. Parsing "YYYY-MM-DD" as local midnight and then formatting
+  // with toISOString() shifts the date back a day in any timezone ahead of UTC
+  // (Europe/Berlin included), which silently mismatched every public holiday.
+  const current = new Date(startDate + "T00:00:00Z");
+  const end = new Date(endDate + "T00:00:00Z");
 
   while (current <= end) {
-    const day = current.getDay();
+    const day = current.getUTCDay();
     const dateStr = current.toISOString().slice(0, 10);
     if (day !== 0 && day !== 6 && !holidaySet.has(dateStr)) {
       count++;
     }
-    current.setDate(current.getDate() + 1);
+    current.setUTCDate(current.getUTCDate() + 1);
   }
 
   return count;
