@@ -16,7 +16,7 @@ npm test             # Run all tests (vitest run)
 npm run test:watch   # Watch mode
 npx vitest run src/services/__tests__/allowance.test.ts   # Single test file
 npx vitest run -t "carryover"                              # Single test by name
-docker compose up -d --build                               # Deploy
+./scripts/deploy.sh                                        # Deploy (see docs/DEPLOYMENT.md)
 ```
 
 ## Architecture
@@ -95,6 +95,15 @@ SQLite at `DB_PATH` (default `./data/holidays.db`), WAL mode, foreign keys on. T
 - **Dead code from the pre-`feiertagejs` era**: the `public_holidays` table, `db/repositories/publicHolidayRepo.ts`, and `modals/importHolidaysModal.ts` are unreferenced by any handler. Public holidays are computed from `feiertagejs` per request; don't wire new code into them.
 - **Dates are stored ISO and formatted at render time** via `services/dates.ts`. Never put a raw `YYYY-MM-DD` in user-facing copy — German users read `19.03.2026`.
 - Bolt handler param types are loose here: `(body as any).trigger_id`, `(body as any).view` etc. are the established idiom rather than fighting the union types.
+
+## Deployment
+
+Runs as a Docker container on an IONOS VM at `/root/slack-holiday-tracker` (root-owned; the SSH alias is `ionos-showcase`). `./scripts/deploy.sh` backs up the DB, pulls, rebuilds and verifies. Two things that bite:
+
+- **`docker compose up -d --build` alone does not deploy.** It rebuilds the image, prints `Container holiday-tracker-bot Running`, and leaves the old container on the old image. `--force-recreate` is mandatory, and the deploy must verify the running container's image digest matches the freshly built one.
+- **The SQLite database cannot be backed up by copying `holidays.db`.** WAL mode plus a long-lived connection means the main file stays near-empty (4 KB against a 704 KB WAL) and a copy of it opens cleanly as an empty database. Use `better-sqlite3`'s `.backup()`, which is safe against the live connection.
+
+Full details, including rollback and the unrelated containers sharing that host, are in `docs/DEPLOYMENT.md`.
 
 ## Testing
 

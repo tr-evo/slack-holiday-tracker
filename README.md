@@ -62,10 +62,16 @@ See [docs/SETUP.md](docs/SETUP.md) for the full step-by-step guide covering:
 ## Deployment
 
 ```bash
-docker compose up -d --build
+./scripts/deploy.sh
 ```
 
-The SQLite database is persisted in `./data/`. The bot connects outbound via websocket — no inbound ports needed.
+Deploys `main` to the IONOS VM: backs up the database, pulls, rebuilds,
+recreates the container and verifies it came up on the new image. See
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the host details, the
+`--force-recreate` requirement, and how to roll back.
+
+The SQLite database lives in a named Docker volume and is not touched by a
+deploy. The bot connects outbound via websocket — no inbound ports needed.
 
 ## Tech Stack
 
