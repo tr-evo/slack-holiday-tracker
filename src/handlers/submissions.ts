@@ -2,38 +2,51 @@ import type { App } from "@slack/bolt";
 import { getDb } from "../db/connection.js";
 import { createUserRepo } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
-import { calculateRequestDays, calculateRemainingDays, getEffectiveCarryover } from "../services/allowance.js";
-import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { getHolidayDatesForYears } from "../services/publicHolidays.js";
-import { parseDateRanges, buildNachtragenPreviewModal, type PreviewEntry } from "../modals/batchPastHolidayModal.js";
-import { sendDM } from "../services/slack.js";
+import { getRequestContext } from "../services/balance.js";
+import { previewRequest } from "../services/requestPreview.js";
+import { parseDateRanges } from "../services/batchParser.js";
+import { formatRange, todayIso } from "../services/dates.js";
+import { sendDM, sendDMs } from "../services/slack.js";
+import { buildNachtragenPreviewModal } from "../modals/batchPastHolidayModal.js";
+import { contextBlocks } from "../modals/reviewModal.js";
+import { readDraft } from "../modals/requestModal.js";
+import { formatDays } from "../modals/shared.js";
 import { t } from "../i18n/t.js";
+import { applyDecision } from "./actions.js";
+import { previewEntries } from "./admin.js";
+import { refreshHome } from "./views.js";
 
 export function registerSubmissionHandlers(app: App) {
+  // ------------------------------------------------------- new holiday request
   app.view("submit_holiday_request", async ({ ack, body, view, client }) => {
     const db = getDb();
     const userRepo = createUserRepo(db);
     const requestRepo = createRequestRepo(db);
-    const settingsRepo = createSettingsRepo(db);
-    const bundesland = settingsRepo.getBundesland();
 
-    const userId = body.user.id;
-    const user = userRepo.findById(userId);
+    const user = userRepo.findById(body.user.id);
     if (!user) {
-      await ack({ response_action: "errors", errors: {} });
+      await ack();
       return;
     }
 
-    const values = view.state.values;
-    const startDate = values.start_date_block.start_date.selected_date!;
-    const endDate = values.end_date_block.end_date.selected_date!;
-    const halfDays = values.half_days_block?.half_days?.selected_options ?? [];
-    const halfDayStart = halfDays.some((o: any) => o.value === "half_day_start");
-    const halfDayEnd = halfDays.some((o: any) => o.value === "half_day_end");
-    const reason = values.reason_block?.reason?.value ?? null;
+    const draft = readDraft(view.state.values);
+    if (!draft.startDate || !draft.endDate) {
+      await ack({
+        response_action: "errors",
+        errors: { end_date_block: t("request.pick_dates", user.language) },
+      });
+      return;
+    }
 
-    // Validate dates
-    if (endDate < startDate) {
+    // The same computation that drove the live preview, so the number the user
+    // saw is the number enforced here.
+    const preview = await previewRequest(db, user, draft, user.language);
+    if (!preview) {
+      await ack();
+      return;
+    }
+
+    if (preview.problem === "order") {
       await ack({
         response_action: "errors",
         errors: { end_date_block: t("request.invalid_dates", user.language) },
@@ -41,30 +54,23 @@ export function registerSubmissionHandlers(app: App) {
       return;
     }
 
-    // Check remaining allowance — fetch holidays for all relevant years (handles cross-year requests)
-    const year = new Date().getFullYear();
-    const requestYears = [...new Set([
-      Number(startDate.slice(0, 4)),
-      Number(endDate.slice(0, 4)),
-      year,
-    ])];
-    const publicHolidays = bundesland ? await getHolidayDatesForYears(requestYears, bundesland) : [];
-    const requestedDays = calculateRequestDays(startDate, endDate, halfDayStart, halfDayEnd, publicHolidays);
-    const approved = requestRepo.getApprovedForUserInYear(userId, year);
-    const carryover = getEffectiveCarryover(
-      user.carryoverDays,
-      settingsRepo.isCarryoverEnabled(),
-      settingsRepo.getCarryoverCutoff()
-    );
-    const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
+    // A weekends-only range used to pass validation and land a worthless
+    // request in an admin's queue: `0 > remaining` is false.
+    if (preview.problem === "zero") {
+      await ack({
+        response_action: "errors",
+        errors: { end_date_block: t("request.zero_days", user.language) },
+      });
+      return;
+    }
 
-    if (requestedDays > remaining) {
+    if (preview.problem === "insufficient") {
       await ack({
         response_action: "errors",
         errors: {
           end_date_block: t("request.insufficient_days", user.language, {
-            remaining: String(remaining),
-            requested: String(requestedDays),
+            remaining: formatDays(preview.remaining, user.language),
+            requested: formatDays(preview.days, user.language),
           }),
         },
       });
@@ -73,155 +79,156 @@ export function registerSubmissionHandlers(app: App) {
 
     await ack();
 
-    // Create the request
     const requestId = requestRepo.create({
-      userId,
-      startDate,
-      endDate,
-      halfDayStart,
-      halfDayEnd,
-      reason,
+      userId: user.slackId,
+      startDate: draft.startDate,
+      endDate: draft.endDate,
+      halfDayStart: draft.halfDayStart,
+      halfDayEnd: draft.halfDayEnd,
+      reason: draft.reason ?? null,
     });
 
-    // Auto-approve past holidays, require approval for future ones
-    const today = new Date().toISOString().slice(0, 10);
-    const isPast = endDate < today;
+    const isPast = draft.endDate < todayIso();
 
     if (isPast) {
-      requestRepo.approve(requestId, userId, null);
-      await sendDM(client, userId, t("request.past_auto_approved", user.language, { start: startDate, end: endDate }));
-    } else {
-      // Notify user
-      await sendDM(client, userId, t("request.submitted", user.language));
-
-      // Notify admins
-      const admins = userRepo.getAdmins();
-      const daysText = t("approval.days", user.language, { count: String(requestedDays) });
-      for (const admin of admins) {
-        const adminLang = admin.language;
-        await client.chat.postMessage({
-          channel: admin.slackId,
-          text: t("approval.new_request", adminLang, { name: user.name }),
-          blocks: [
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: [
-                  `*${t("approval.new_request", adminLang, { name: user.name })}*`,
-                  t("approval.dates", adminLang, { start: startDate, end: endDate }),
-                  daysText,
-                  reason ? `> ${reason}` : "",
-                ].filter(Boolean).join("\n"),
-              },
-            },
-            {
-              type: "actions",
-              elements: [
-                {
-                  type: "button",
-                  text: { type: "plain_text", text: t("approval.approve", adminLang) },
-                  style: "primary",
-                  action_id: "approve_request",
-                  value: String(requestId),
-                },
-                {
-                  type: "button",
-                  text: { type: "plain_text", text: t("approval.reject", adminLang) },
-                  style: "danger",
-                  action_id: "reject_request",
-                  value: String(requestId),
-                },
-              ],
-            },
-          ],
-        });
-      }
+      requestRepo.approve(requestId, user.slackId, null);
+      await sendDM(
+        client,
+        user.slackId,
+        t("request.past_auto_approved", user.language, {
+          range: formatRange(draft.startDate, draft.endDate, user.language),
+        })
+      );
+      await refreshHome(client, user);
+      return;
     }
+
+    await sendDM(client, user.slackId, t("request.submitted", user.language));
+    await refreshHome(client, user);
+
+    const request = requestRepo.findById(requestId)!;
+    const context = await getRequestContext(db, user, request);
+    const admins = userRepo.getAdmins();
+
+    // Fan out in parallel — this used to be two serial API calls per admin
+    await sendDMs(
+      client,
+      admins.map((admin) => ({
+        userId: admin.slackId,
+        text: t("approval.new_request", admin.language, { name: user.name }),
+        blocks: approvalBlocks(admin.language, user.name, request, context, draft.reason ?? null),
+      }))
+    );
+
+    await Promise.all(admins.map((admin) => refreshHome(client, admin)));
   });
 
-  // User batch nachtragen — parse and show preview
-  app.view("user_nachtragen_submit", async ({ ack, body, view }) => {
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const settingsRepo = createSettingsRepo(db);
-    const bundesland = settingsRepo.getBundesland();
+  // --------------------------------------------------- approve / reject a request
+  app.view("review_submit", async ({ ack, body, view, client }) => {
+    await ack();
+    const { requestId, action } = JSON.parse(view.private_metadata);
+    const comment = view.state.values.review_comment_block?.review_comment?.value?.trim() || null;
+    await applyDecision(client, body, requestId, action, comment, false);
+  });
 
-    const user = userRepo.findById(body.user.id);
+  // ------------------------------------------------ employee batch past holidays
+  app.view("user_nachtragen_submit", async ({ ack, body, view }) => {
+    const user = createUserRepo(getDb()).findById(body.user.id);
     if (!user) {
       await ack();
       return;
     }
 
-    const values = view.state.values;
-    const datesText = values.batch_dates_block?.batch_dates?.value;
-
+    const datesText = view.state.values.batch_dates_block?.batch_dates?.value;
     if (!datesText) {
       await ack();
       return;
     }
 
     const { ranges, errors } = parseDateRanges(datesText);
-
     if (errors.length > 0) {
       await ack({
         response_action: "errors",
-        errors: {
-          batch_dates_block: errors
-            .map((line: string) => t("admin.batch_parse_error", user.language, { line }))
-            .join("; "),
-        },
+        errors: { batch_dates_block: t("admin.batch_parse_error", user.language, { line: errors.join(", ") }) },
       });
       return;
     }
 
-    // Get public holidays for all relevant years
-    const years = [...new Set(ranges.flatMap((r) => [
-      Number(r.startDate.slice(0, 4)),
-      Number(r.endDate.slice(0, 4)),
-    ]))];
-    const publicHolidays = bundesland ? await getHolidayDatesForYears(years, bundesland) : [];
-
-    const entries: PreviewEntry[] = ranges.map((range) => ({
-      range,
-      days: calculateRequestDays(range.startDate, range.endDate, false, false, publicHolidays),
-    }));
-
-    const metadata = JSON.stringify({ ranges });
     await ack({
       response_action: "push",
-      view: buildNachtragenPreviewModal(user.language, entries, "user_nachtragen_confirm", metadata),
+      view: buildNachtragenPreviewModal(
+        user.language,
+        await previewEntries(ranges),
+        "user_nachtragen_confirm",
+        JSON.stringify({ ranges })
+      ),
     } as any);
   });
 
-  // User nachtragen confirm — actually create the entries
   app.view("user_nachtragen_confirm", async ({ ack, body, view, client }) => {
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
-
-    const userId = body.user.id;
-    const user = userRepo.findById(userId);
-    if (!user) {
-      await ack();
-      return;
-    }
-
-    const { ranges } = JSON.parse(view.private_metadata);
     await ack();
+    const db = getDb();
+    const user = createUserRepo(db).findById(body.user.id);
+    if (!user) return;
+
+    const requestRepo = createRequestRepo(db);
+    const { ranges } = JSON.parse(view.private_metadata);
 
     for (const range of ranges) {
-      const requestId = requestRepo.create({
-        userId,
+      const id = requestRepo.create({
+        userId: user.slackId,
         startDate: range.startDate,
         endDate: range.endDate,
         halfDayStart: false,
         halfDayEnd: false,
         reason: null,
       });
-      requestRepo.approve(requestId, userId, null);
+      requestRepo.approve(id, user.slackId, null);
     }
 
-    await sendDM(client, userId, t("nachtragen.done", user.language, { count: String(ranges.length) }));
+    await sendDM(client, user.slackId, t("nachtragen.done", user.language, { count: String(ranges.length) }));
+    await refreshHome(client, user);
   });
+}
+
+/** The approval DM: the decision plus the context it needs, not just the dates. */
+function approvalBlocks(lang: string, name: string, request: any, context: any, reason: string | null): any[] {
+  const blocks: any[] = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: [
+          `*${t("approval.new_request", lang, { name })}*`,
+          `${formatRange(request.startDate, request.endDate, lang)}  ·  ${t("common.days", lang, { days: formatDays(context.days, lang) })}`,
+        ].join("\n"),
+      },
+    },
+  ];
+
+  if (reason) blocks.push({ type: "section", text: { type: "mrkdwn", text: `> ${reason}` } });
+
+  blocks.push(...contextBlocks(lang, context));
+
+  blocks.push({
+    type: "actions",
+    elements: [
+      {
+        type: "button",
+        style: "primary",
+        action_id: "approve_request",
+        value: String(request.id),
+        text: { type: "plain_text", text: t("approval.approve", lang) },
+      },
+      {
+        type: "button",
+        style: "danger",
+        action_id: "reject_request",
+        value: String(request.id),
+        text: { type: "plain_text", text: t("approval.reject_with_reason", lang) },
+      },
+    ],
+  });
+
+  return blocks;
 }

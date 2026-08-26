@@ -29,10 +29,12 @@ export interface RequestRepo {
   listByUser(userId: string): HolidayRequest[];
   approve(id: number, approvedBy: string, comment: string | null): void;
   reject(id: number, rejectedBy: string, comment: string | null): void;
+  cancel(id: number, cancelledBy: string): void;
   deleteById(id: number): void;
   getPending(): HolidayRequest[];
   getApprovedForUserInYear(userId: string, year: number): HolidayRequest[];
   getUpcomingApproved(fromDate: string): HolidayRequest[];
+  getApprovedOverlapping(startDate: string, endDate: string, excludeUserId?: string): HolidayRequest[];
 }
 
 function rowToRequest(row: any): HolidayRequest {
@@ -80,6 +82,11 @@ export function createRequestRepo(db: Database.Database): RequestRepo {
         .run(rejectedBy, comment, id);
     },
 
+    cancel(id, cancelledBy) {
+      db.prepare("UPDATE holiday_requests SET status = 'cancelled', approved_by = ? WHERE id = ?")
+        .run(cancelledBy, id);
+    },
+
     deleteById(id) {
       db.prepare("DELETE FROM holiday_requests WHERE id = ?").run(id);
     },
@@ -103,6 +110,17 @@ export function createRequestRepo(db: Database.Database): RequestRepo {
          WHERE status = 'approved' AND end_date >= ?
          ORDER BY start_date ASC`
       ).all(fromDate).map(rowToRequest);
+    },
+
+    // Two ranges overlap when each starts on or before the other one ends.
+    getApprovedOverlapping(startDate, endDate, excludeUserId) {
+      return db.prepare(
+        `SELECT * FROM holiday_requests
+         WHERE status = 'approved'
+         AND start_date <= ? AND end_date >= ?
+         AND (? IS NULL OR user_id != ?)
+         ORDER BY start_date ASC`
+      ).all(endDate, startDate, excludeUserId ?? null, excludeUserId ?? null).map(rowToRequest);
     },
   };
 }

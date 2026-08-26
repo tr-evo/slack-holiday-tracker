@@ -1,356 +1,434 @@
 import type { App } from "@slack/bolt";
 import { getDb } from "../db/connection.js";
-import { createUserRepo } from "../db/repositories/userRepo.js";
-import { createRequestRepo } from "../db/repositories/requestRepo.js";
-import { buildAdminPanelModal } from "../modals/adminPanel.js";
-import { buildBatchPastHolidayModal, parseDateRanges, buildNachtragenPreviewModal, type PreviewEntry } from "../modals/batchPastHolidayModal.js";
-import { buildManageHolidaysPickerModal, buildHolidayListModal } from "../modals/manageHolidaysModal.js";
-import { BUNDESLAENDER, getHolidayDatesForYears } from "../services/publicHolidays.js";
-import { calculateRequestDays } from "../services/allowance.js";
+import { createUserRepo, type User } from "../db/repositories/userRepo.js";
+import { createRequestRepo, type HolidayRequest } from "../db/repositories/requestRepo.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
+import {
+  buildAdminApprovalsModal,
+  buildAdminPeopleModal,
+  buildAdminSettingsModal,
+  type PendingEntry,
+} from "../modals/adminModals.js";
+import { buildManageHolidaysModal, type ManageEntry, type ManageTarget } from "../modals/manageHolidaysModal.js";
+import { buildBatchPastHolidayModal, buildNachtragenPreviewModal, type PreviewEntry } from "../modals/batchPastHolidayModal.js";
+import { parseDateRanges } from "../services/batchParser.js";
+import { getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
+import { calculateRequestDays } from "../services/allowance.js";
+import { getRequestContext, yearsSpannedBy } from "../services/balance.js";
+import { searchMembers } from "../services/memberDirectory.js";
+import { formatRange, todayIso } from "../services/dates.js";
 import { sendDM } from "../services/slack.js";
 import { t } from "../i18n/t.js";
+import { openOrPush, refreshHome } from "./views.js";
 
-async function fetchWorkspaceMembers(client: any): Promise<{ id: string; name: string }[]> {
-  const result = await client.users.list();
-  return (result.members ?? [])
-    .filter((m: any) => !m.is_bot && m.id !== "USLACKBOT" && !m.deleted && !m.is_restricted && !m.is_ultra_restricted)
-    .map((m: any) => ({ id: m.id, name: m.real_name || m.name }));
+function requireAdmin(userId: string): User | null {
+  const admin = createUserRepo(getDb()).findById(userId);
+  return admin?.isAdmin ? admin : null;
 }
 
-function getCarryoverSettings(db: any) {
-  const settingsRepo = createSettingsRepo(db);
-  return {
-    enabled: settingsRepo.isCarryoverEnabled(),
-    cutoff: settingsRepo.getCarryoverCutoff(),
-  };
+/** Pull the id *and* the human name out of a picker selection. */
+function readPicked(values: any, block: string, action: string): { id: string; name: string } | null {
+  const option = values?.[block]?.[action]?.selected_option;
+  if (!option?.value) return null;
+  return { id: option.value, name: option.text?.text ?? option.value };
 }
 
 export function registerAdminHandlers(app: App) {
-  // Options handler for external_select user pickers
+  // Backed by a cached, fully paginated directory rather than a users.list call
+  // per keystroke — see services/memberDirectory.ts
   const handleUserOptions = async ({ options, ack, client }: any) => {
-    const query = (options.value ?? "").toLowerCase();
-    const members = await fetchWorkspaceMembers(client);
-    const filtered = members
-      .filter((m: any) => m.name.toLowerCase().includes(query))
-      .slice(0, 100)
-      .map((m: any) => ({
-        text: { type: "plain_text", text: m.name },
-        value: m.id,
-      }));
-    await ack({ options: filtered });
+    const members = await searchMembers(client, options.value ?? "");
+    await ack({
+      options: members.map((m) => ({ text: { type: "plain_text", text: m.name }, value: m.id })),
+    });
   };
 
-  app.options("admin_user_select", handleUserOptions);
-  app.options("admin_toggle_user_select", handleUserOptions);
+  app.options("people_user_select", handleUserOptions);
+  app.options("manage_user_select", handleUserOptions);
   app.options("batch_user_select", handleUserOptions);
-  // Open admin panel from menu
-  app.action("open_admin_panel", async ({ ack, body, client }) => {
+
+  // ------------------------------------------------------------- approvals
+  app.action("open_admin_approvals", async ({ ack, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const user = userRepo.findById(body.user.id);
-    if (!user?.isAdmin) return;
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+    await openOrPush(client, body, await buildApprovalsView(admin.language));
+  });
 
-    const requestRepo = createRequestRepo(db);
-    const pending = requestRepo.getPending();
-
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: buildAdminPanelModal(user.language, pending, getCarryoverSettings(db), createSettingsRepo(db).getBundesland()),
+  app.action("admin_approvals_more", async ({ ack, action, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+    await client.views.update({
+      view_id: (body as any).view.id,
+      view: await buildApprovalsView(admin.language, Number((action as any).value) || 0),
     });
   });
 
-  // Admin panel submit — set allowance
-  app.view("admin_panel_submit", async ({ ack, body, view, client }) => {
+  // ---------------------------------------------------------------- people
+  app.action("open_admin_people", async ({ ack, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+    const carryover = createSettingsRepo(getDb()).isCarryoverEnabled();
+    await openOrPush(client, body, buildAdminPeopleModal(admin.language, null, carryover));
+  });
+
+  // Selecting a person re-renders the form with their current values, so the
+  // fields always show what is actually stored rather than empty placeholders.
+  app.action("people_user_select", async ({ ack, action, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+
     const db = getDb();
     const userRepo = createUserRepo(db);
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) {
-      await ack();
+    const option = (action as any).selected_option;
+    if (!option?.value) return;
+
+    userRepo.upsert({ slackId: option.value, name: option.text?.text ?? option.value });
+    const selected = userRepo.findById(option.value);
+
+    await client.views.update({
+      view_id: (body as any).view.id,
+      hash: (body as any).view.hash,
+      view: buildAdminPeopleModal(admin.language, selected, createSettingsRepo(db).isCarryoverEnabled()),
+    });
+  });
+
+  // Saves allowance and carryover only. Admin rights are a separate, explicit,
+  // confirmed action — they used to flip as a side effect of saving this form.
+  app.view("admin_people_submit", async ({ ack, body, view, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const values = view.state.values;
+
+    const picked = readPicked(values, "people_user_block", "people_user_select");
+    if (!picked) return;
+
+    userRepo.upsert({ slackId: picked.id, name: picked.name });
+
+    const allowance = values.allowance_block?.admin_allowance?.value;
+    if (allowance != null && allowance !== "") userRepo.setAllowance(picked.id, Number(allowance));
+
+    const carryoverDays = values.carryover_days_block?.admin_carryover_days?.value;
+    if (carryoverDays != null && carryoverDays !== "") userRepo.setCarryoverDays(picked.id, Number(carryoverDays));
+
+    const target = userRepo.findById(picked.id);
+    if (target) {
+      await sendDM(client, admin.slackId, t("admin.saved_person", admin.language, { name: target.name }));
+      await refreshHome(client, target);
+    }
+  });
+
+  app.action("toggle_admin_rights", async ({ ack, action, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const targetId = (action as any).value;
+    const target = userRepo.findById(targetId);
+    if (!target) return;
+
+    // Don't let the last admin lock everyone out of the panel.
+    if (target.isAdmin && userRepo.getAdmins().length <= 1) {
+      await sendDM(client, admin.slackId, t("admin.last_admin", admin.language));
       return;
     }
 
-    const values = view.state.values;
+    userRepo.setAdmin(targetId, !target.isAdmin);
+    const updated = userRepo.findById(targetId)!;
 
-    // Handle set allowance
-    const selectedUserId = values.user_select_block?.admin_user_select?.selected_option?.value;
-    const newAllowance = values.allowance_block?.admin_allowance?.value;
-
-    if (selectedUserId && newAllowance) {
-      userRepo.upsert({ slackId: selectedUserId, name: selectedUserId });
-      userRepo.setAllowance(selectedUserId, Number(newAllowance));
-    }
-
-    // Handle carryover days for selected user
-    const carryoverDays = values.carryover_days_block?.admin_carryover_days?.value;
-    if (selectedUserId && carryoverDays != null) {
-      userRepo.setCarryoverDays(selectedUserId, Number(carryoverDays));
-    }
-
-    // Handle carryover cutoff setting
-    const cutoffValue = values.carryover_cutoff_block?.carryover_cutoff?.value;
-    if (cutoffValue) {
-      const settingsRepo = createSettingsRepo(db);
-      settingsRepo.set("carryover_cutoff", cutoffValue);
-    }
-
-    // Handle Bundesland setting
-    const bundeslandValue = values.bundesland_block?.admin_bundesland?.selected_option?.value;
-    if (bundeslandValue) {
-      const settingsRepo = createSettingsRepo(db);
-      settingsRepo.set("bundesland", bundeslandValue);
-    }
-
-    // Handle toggle admin
-    const toggleUserId = values.admin_toggle_user_block?.admin_toggle_user_select?.selected_option?.value;
-    if (toggleUserId) {
-      userRepo.upsert({ slackId: toggleUserId, name: toggleUserId });
-      const targetUser = userRepo.findById(toggleUserId);
-      if (targetUser) {
-        userRepo.setAdmin(toggleUserId, !targetUser.isAdmin);
-      }
-    }
-
-    await ack();
+    await client.views.update({
+      view_id: (body as any).view.id,
+      view: buildAdminPeopleModal(admin.language, updated, createSettingsRepo(db).isCarryoverEnabled()),
+    });
+    await refreshHome(client, updated);
   });
 
-  // Admin overflow menu actions on pending requests
-  app.action(/^admin_request_action_\d+$/, async ({ ack, action, body, client }) => {
+  // -------------------------------------------------------------- settings
+  app.action("open_admin_settings", async ({ ack, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
-
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) return;
-
-    const selectedValue = (action as any).selected_option?.value as string;
-    if (!selectedValue) return;
-
-    const [actionType, requestIdStr] = selectedValue.split("_");
-    const requestId = Number(requestIdStr);
-    const adminId = body.user.id;
-
-    if (actionType === "approve") {
-      requestRepo.approve(requestId, adminId, null);
-    } else if (actionType === "reject") {
-      requestRepo.reject(requestId, adminId, null);
-    }
-
-    const request = requestRepo.findById(requestId);
-    if (request) {
-      const requester = userRepo.findById(request.userId);
-      if (requester) {
-        const key = actionType === "approve" ? "approval.approved" : "approval.rejected";
-        await sendDM(client, requester.slackId, t(key, requester.language, {
-          start: request.startDate,
-          end: request.endDate,
-        }));
-      }
-    }
-
-    // Refresh admin panel to remove the handled request
-    const updatedPending = requestRepo.getPending();
-    const viewId = (body as any).view?.id;
-    if (viewId) {
-      await client.views.update({
-        view_id: viewId,
-        view: buildAdminPanelModal(admin.language, updatedPending, getCarryoverSettings(db), createSettingsRepo(db).getBundesland()),
-      });
-    }
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+    await openOrPush(client, body, buildAdminSettingsModal(admin.language, readSettings()));
   });
 
-  // Toggle carryover setting
   app.action("toggle_carryover", async ({ ack, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
-    const settingsRepo = createSettingsRepo(db);
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
 
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) return;
+    const settingsRepo = createSettingsRepo(getDb());
+    settingsRepo.set("carryover_enabled", settingsRepo.isCarryoverEnabled() ? "false" : "true");
 
-    const currentlyEnabled = settingsRepo.isCarryoverEnabled();
-    settingsRepo.set("carryover_enabled", currentlyEnabled ? "false" : "true");
-
-    const pending = requestRepo.getPending();
-    const viewId = (body as any).view?.id;
-    if (viewId) {
-      await client.views.update({
-        view_id: viewId,
-        view: buildAdminPanelModal(admin.language, pending, getCarryoverSettings(db), createSettingsRepo(db).getBundesland()),
-      });
-    }
-  });
-
-  // Open "Batch Add Past Holidays" modal (pushed from main menu at depth 1 → depth 2)
-  app.action("open_batch_past_holiday", async ({ ack, body, client }) => {
-    await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) return;
-
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: buildBatchPastHolidayModal(admin.language),
+    await client.views.update({
+      view_id: (body as any).view.id,
+      view: buildAdminSettingsModal(admin.language, readSettings()),
     });
   });
 
-  // Handle "Batch Add Past Holidays" submission — show preview
-  app.view("batch_past_holiday_submit", async ({ ack, body, view }) => {
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) {
+  app.view("admin_settings_submit", async ({ ack, body, view, client }) => {
+    const admin = requireAdmin(body.user.id);
+    if (!admin) {
       await ack();
       return;
     }
 
     const values = view.state.values;
-    const selectedUserId = values.batch_user_block?.batch_user_select?.selected_option?.value;
+    const cutoff = values.carryover_cutoff_block?.carryover_cutoff?.value;
+
+    if (cutoff && !/^\d{2}-\d{2}$/.test(cutoff.trim())) {
+      await ack({
+        response_action: "errors",
+        errors: { carryover_cutoff_block: t("admin.carryover_cutoff_invalid", admin.language) },
+      });
+      return;
+    }
+
+    await ack();
+    const settingsRepo = createSettingsRepo(getDb());
+
+    const bundesland = values.bundesland_block?.admin_bundesland?.selected_option?.value;
+    if (bundesland) settingsRepo.set("bundesland", bundesland);
+    if (cutoff) settingsRepo.set("carryover_cutoff", cutoff.trim());
+
+    await sendDM(client, admin.slackId, t("admin.saved_settings", admin.language));
+  });
+
+  // ------------------------------------------------- manage someone's holidays
+  app.action("open_manage_holidays", async ({ ack, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+    await openOrPush(client, body, await buildManageView(admin.language, null));
+  });
+
+  app.action("manage_user_select", async ({ ack, action, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+
+    const option = (action as any).selected_option;
+    if (!option?.value) return;
+
+    await client.views.update({
+      view_id: (body as any).view.id,
+      hash: (body as any).view.hash,
+      view: await buildManageView(admin.language, { id: option.value, name: option.text?.text ?? option.value }),
+    });
+  });
+
+  app.action("manage_holidays_more", async ({ ack, action, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+
+    const meta = JSON.parse((body as any).view?.private_metadata || "{}");
+    await client.views.update({
+      view_id: (body as any).view.id,
+      view: await buildManageView(admin.language, targetFrom(meta), Number((action as any).value) || 0),
+    });
+  });
+
+  // Cancel keeps the record and returns the days; delete is the escape hatch
+  // for entries that should never have existed. Both sit behind a confirm.
+  app.action(/^manage_holiday_action_\d+$/, async ({ ack, action, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+
+    const selected = (action as any).selected_option?.value as string | undefined;
+    if (!selected) return;
+
+    const [verb, idText] = selected.split("_");
+    const requestId = Number(idText);
+    if (!Number.isFinite(requestId)) return;
+
+    const db = getDb();
+    const userRepo = createUserRepo(db);
+    const requestRepo = createRequestRepo(db);
+    const request = requestRepo.findById(requestId);
+    if (!request) return;
+
+    if (verb === "cancel") {
+      requestRepo.cancel(requestId, admin.slackId);
+    } else if (verb === "delete") {
+      requestRepo.deleteById(requestId);
+    } else {
+      return;
+    }
+
+    const owner = userRepo.findById(request.userId);
+    if (owner) {
+      await sendDM(
+        client,
+        owner.slackId,
+        t(verb === "cancel" ? "admin.cancelled_your_holiday" : "admin.deleted_your_holiday", owner.language, {
+          range: formatRange(request.startDate, request.endDate, owner.language),
+        })
+      );
+      await refreshHome(client, owner);
+    }
+
+    const meta = JSON.parse((body as any).view?.private_metadata || "{}");
+    await client.views.update({
+      view_id: (body as any).view.id,
+      view: await buildManageView(admin.language, targetFrom(meta) ?? { id: request.userId, name: owner?.name ?? request.userId }, meta.offset ?? 0),
+    });
+  });
+
+  // ------------------------------------------------------- batch past holidays
+  app.action("open_batch_past_holiday", async ({ ack, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+    await openOrPush(client, body, buildBatchPastHolidayModal(admin.language));
+  });
+
+  app.view("batch_past_holiday_submit", async ({ ack, body, view }) => {
+    const admin = requireAdmin(body.user.id);
+    if (!admin) {
+      await ack();
+      return;
+    }
+
+    const values = view.state.values;
+    const picked = readPicked(values, "batch_user_block", "batch_user_select");
     const datesText = values.batch_dates_block?.batch_dates?.value;
 
-    if (!selectedUserId || !datesText) {
+    if (!picked || !datesText) {
       await ack();
       return;
     }
 
     const { ranges, errors } = parseDateRanges(datesText);
-
     if (errors.length > 0) {
       await ack({
         response_action: "errors",
-        errors: {
-          batch_dates_block: errors
-            .map((line) => t("admin.batch_parse_error", admin.language, { line }))
-            .join("; "),
-        },
+        errors: { batch_dates_block: t("admin.batch_parse_error", admin.language, { line: errors.join(", ") }) },
       });
       return;
     }
 
-    const settingsRepo = createSettingsRepo(db);
-    const bundesland = settingsRepo.getBundesland();
-    const years = [...new Set(ranges.flatMap((r: any) => [
-      Number(r.startDate.slice(0, 4)),
-      Number(r.endDate.slice(0, 4)),
-    ]))];
-    const publicHolidays = bundesland ? await getHolidayDatesForYears(years, bundesland) : [];
-    const entries: PreviewEntry[] = ranges.map((range: any) => ({
-      range,
-      days: calculateRequestDays(range.startDate, range.endDate, false, false, publicHolidays),
-    }));
-
-    const metadata = JSON.stringify({ userId: selectedUserId, ranges });
+    const entries = await previewEntries(ranges);
     await ack({
       response_action: "push",
-      view: buildNachtragenPreviewModal(admin.language, entries, "batch_past_holiday_confirm", metadata),
+      view: buildNachtragenPreviewModal(
+        admin.language,
+        entries,
+        "batch_past_holiday_confirm",
+        JSON.stringify({ user: picked, ranges })
+      ),
     } as any);
   });
 
-  // Admin batch confirm — actually create the entries
   app.view("batch_past_holiday_confirm", async ({ ack, body, view, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+
+    const { user: picked, ranges } = JSON.parse(view.private_metadata);
     const db = getDb();
     const userRepo = createUserRepo(db);
     const requestRepo = createRequestRepo(db);
 
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) {
-      await ack();
-      return;
-    }
-
-    const { userId: selectedUserId, ranges } = JSON.parse(view.private_metadata);
-    await ack();
-
-    userRepo.upsert({ slackId: selectedUserId, name: selectedUserId });
+    // Store the real name, not the Slack id
+    userRepo.upsert({ slackId: picked.id, name: picked.name });
 
     for (const range of ranges) {
-      const requestId = requestRepo.create({
-        userId: selectedUserId,
+      const id = requestRepo.create({
+        userId: picked.id,
         startDate: range.startDate,
         endDate: range.endDate,
         halfDayStart: false,
         halfDayEnd: false,
         reason: null,
       });
-      requestRepo.approve(requestId, body.user.id, null);
+      requestRepo.approve(id, admin.slackId, null);
     }
 
-    await sendDM(client, body.user.id, t("admin.batch_past_holidays_added", admin.language, {
-      count: String(ranges.length),
-      user: selectedUserId,
-    }));
+    await sendDM(
+      client,
+      admin.slackId,
+      t("admin.batch_past_holidays_added", admin.language, { count: String(ranges.length), user: picked.name })
+    );
+
+    const target = userRepo.findById(picked.id);
+    if (target) await refreshHome(client, target);
   });
+}
 
-  // Open "Manage Holidays" modal (user picker)
-  app.options("manage_user_select", handleUserOptions);
-  app.action("open_manage_holidays", async ({ ack, body, client }) => {
-    await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) return;
+// ---------------------------------------------------------------------------
 
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: buildManageHolidaysPickerModal(admin.language),
+function readSettings() {
+  const settingsRepo = createSettingsRepo(getDb());
+  return {
+    bundesland: settingsRepo.getBundesland(),
+    carryoverEnabled: settingsRepo.isCarryoverEnabled(),
+    carryoverCutoff: settingsRepo.getCarryoverCutoff(),
+  };
+}
+
+async function buildApprovalsView(lang: string, offset = 0) {
+  const db = getDb();
+  const userRepo = createUserRepo(db);
+  const requestRepo = createRequestRepo(db);
+
+  const pending = requestRepo.getPending();
+  const entries: PendingEntry[] = [];
+
+  for (const request of pending) {
+    const requester = userRepo.findById(request.userId);
+    if (!requester) continue;
+    entries.push({
+      request,
+      requesterName: requester.name,
+      context: await getRequestContext(db, requester, request),
     });
-  });
+  }
 
-  // Handle user picker submit — show holiday list
-  app.view("manage_holidays_pick_user", async ({ ack, body, view }) => {
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
+  return buildAdminApprovalsModal(lang, entries, offset);
+}
 
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) {
-      await ack();
-      return;
-    }
+function targetFrom(meta: any): ManageTarget | null {
+  return meta?.userId ? { id: meta.userId, name: meta.userName ?? meta.userId } : null;
+}
 
-    const selectedUserId = view.state.values.manage_user_block?.manage_user_select?.selected_option?.value;
-    if (!selectedUserId) {
-      await ack();
-      return;
-    }
+async function buildManageView(lang: string, target: ManageTarget | null, offset = 0) {
+  const db = getDb();
+  const requestRepo = createRequestRepo(db);
+  const bundesland = createSettingsRepo(db).getBundesland();
 
-    const holidays = requestRepo.listByUser(selectedUserId);
-    await ack({
-      response_action: "push",
-      view: buildHolidayListModal(admin.language, selectedUserId, holidays),
-    } as any);
-  });
+  if (!target) return buildManageHolidaysModal(lang, null, [], 0);
 
-  // Handle delete holiday from manage list
-  app.action(/^manage_holiday_action_\d+$/, async ({ ack, action, body, client }) => {
-    await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
+  const requests = requestRepo.listByUser(target.id);
+  const publicHolidays = bundesland
+    ? await getHolidayDatesForYears(yearsSpannedBy(requests, new Date().getUTCFullYear()), bundesland)
+    : [];
 
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) return;
+  const entries: ManageEntry[] = requests.map((r: HolidayRequest) => ({
+    request: r,
+    days: calculateRequestDays(r.startDate, r.endDate, r.halfDayStart, r.halfDayEnd, publicHolidays),
+  }));
 
-    const selectedValue = (action as any).selected_option?.value as string;
-    if (!selectedValue?.startsWith("delete_")) return;
+  return buildManageHolidaysModal(lang, target, entries, offset);
+}
 
-    const requestId = Number(selectedValue.split("_")[1]);
-    requestRepo.deleteById(requestId);
+export async function previewEntries(ranges: { startDate: string; endDate: string }[]): Promise<PreviewEntry[]> {
+  const bundesland = createSettingsRepo(getDb()).getBundesland();
+  const publicHolidays = bundesland
+    ? await getHolidayDatesForYears(yearsSpannedBy(ranges, new Date().getUTCFullYear()), bundesland)
+    : [];
 
-    // Refresh the list
-    const userId = (body as any).view?.private_metadata;
-    if (userId) {
-      const holidays = requestRepo.listByUser(userId);
-      await client.views.update({
-        view_id: (body as any).view.id,
-        view: buildHolidayListModal(admin.language, userId, holidays),
-      });
-    }
-  });
+  return ranges.map((range) => ({
+    range,
+    days: calculateRequestDays(range.startDate, range.endDate, false, false, publicHolidays),
+  }));
 }

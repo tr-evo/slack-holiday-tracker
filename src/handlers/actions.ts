@@ -1,425 +1,399 @@
 import type { App } from "@slack/bolt";
 import { getDb } from "../db/connection.js";
-import { createUserRepo } from "../db/repositories/userRepo.js";
+import { createUserRepo, type User } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
-import { calculateRemainingDays, getEffectiveCarryover, calculateUsageBreakdown, calculateRequestDays } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { getHolidayDatesForYear, getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
+import { calculateRequestDays } from "../services/allowance.js";
+import { getBalanceSnapshot, getRequestContext, yearsSpannedBy } from "../services/balance.js";
+import { previewRequest } from "../services/requestPreview.js";
+import { getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
+import { canUserCancel } from "../services/cancellation.js";
+import { formatDate, formatRange, todayIso } from "../services/dates.js";
+import { sendDM, sendDMs } from "../services/slack.js";
 import { buildMainMenuModal } from "../modals/mainMenu.js";
-import { buildRequestModal } from "../modals/requestModal.js";
+import { buildRequestModal, EMPTY_DRAFT, readDraft } from "../modals/requestModal.js";
 import { buildUserNachtragenModal } from "../modals/batchPastHolidayModal.js";
 import { buildOverviewModal } from "../modals/overviewModal.js";
-import { sendDM } from "../services/slack.js";
+import { buildReviewModal } from "../modals/reviewModal.js";
+import { balanceBlocks, formatDays } from "../modals/shared.js";
 import { t } from "../i18n/t.js";
+import { buildMyHolidaysView, isHomeSurface, openOrPush, refreshHome } from "./views.js";
+
+function currentUser(userId: string): User | null {
+  return createUserRepo(getDb()).findById(userId);
+}
 
 export function registerActionHandlers(app: App) {
-  // Approve request
+  // ---------------------------------------------------------------- approvals
+  // Approving is the common case and stays one click. Rejecting opens a small
+  // form, because a rejection with no reason just moves the conversation to DMs.
   app.action("approve_request", async ({ ack, action, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
-
-    const requestId = Number((action as any).value);
-    const adminId = body.user.id;
-
-    requestRepo.approve(requestId, adminId, null);
-    const request = requestRepo.findById(requestId)!;
-    const requester = userRepo.findById(request.userId);
-
-    if (requester) {
-      await sendDM(client, requester.slackId, t("approval.approved", requester.language, {
-        start: request.startDate,
-        end: request.endDate,
-      }));
-    }
-
-    // Update the admin's message to show it's been handled
-    await client.chat.update({
-      channel: (body as any).channel?.id ?? body.user.id,
-      ts: (body as any).message?.ts ?? "",
-      text: `Approved: ${request.startDate} → ${request.endDate} for <@${request.userId}>`,
-      blocks: [],
-    });
+    await applyDecision(client, body, Number((action as any).value), "approve", null, true);
   });
 
-  // Reject request
   app.action("reject_request", async ({ ack, action, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
-
-    const requestId = Number((action as any).value);
-    const adminId = body.user.id;
-
-    requestRepo.reject(requestId, adminId, null);
-    const request = requestRepo.findById(requestId)!;
-    const requester = userRepo.findById(request.userId);
-
-    if (requester) {
-      await sendDM(client, requester.slackId, t("approval.rejected", requester.language, {
-        start: request.startDate,
-        end: request.endDate,
-      }));
-    }
-
-    await client.chat.update({
-      channel: (body as any).channel?.id ?? body.user.id,
-      ts: (body as any).message?.ts ?? "",
-      text: `Rejected: ${request.startDate} → ${request.endDate} for <@${request.userId}>`,
-      blocks: [],
-    });
+    await openReviewModal(client, body, Number((action as any).value), "reject");
   });
 
-  // Menu: open request modal
+  app.action(/^review_approve_\d+$/, async ({ ack, action, body, client }) => {
+    await ack();
+    await applyDecision(client, body, Number((action as any).value), "approve", null, false);
+  });
+
+  app.action(/^review_reject_\d+$/, async ({ ack, action, body, client }) => {
+    await ack();
+    await openReviewModal(client, body, Number((action as any).value), "reject");
+  });
+
+  // ------------------------------------------------------------------- menus
   app.action("open_request_modal", async ({ ack, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const user = userRepo.findById(body.user.id);
-    const lang = user?.language ?? "en";
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: buildRequestModal(lang),
-    });
+    const user = currentUser(body.user.id);
+    if (!user) return;
+    await openOrPush(client, body, buildRequestModal(user.language, EMPTY_DRAFT));
   });
 
-  // Menu: open nachtragen modal (batch past holidays for self)
   app.action("open_nachtragen_modal", async ({ ack, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const user = userRepo.findById(body.user.id);
-    const lang = user?.language ?? "en";
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: buildUserNachtragenModal(lang),
-    });
+    const user = currentUser(body.user.id);
+    if (!user) return;
+    await openOrPush(client, body, buildUserNachtragenModal(user.language));
   });
 
-  // Menu: show balance (push modal view)
   app.action("show_balance", async ({ ack, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
-    const settingsRepo = createSettingsRepo(db);
-    const bundesland = settingsRepo.getBundesland();
-
-    const user = userRepo.findById(body.user.id);
+    const user = currentUser(body.user.id);
     if (!user) return;
 
-    const year = new Date().getFullYear();
-    const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-    // Fetch holidays for all years the approved requests span (handles cross-year requests like Christmas)
-    const approvedYears = [...new Set(approved.flatMap((r) => [
-      Number(r.startDate.slice(0, 4)),
-      Number(r.endDate.slice(0, 4)),
-    ]))];
-    if (!approvedYears.includes(year)) approvedYears.push(year);
-    const publicHolidays = bundesland ? await getHolidayDatesForYears(approvedYears, bundesland) : [];
-    const carryover = getEffectiveCarryover(
-      user.carryoverDays,
-      settingsRepo.isCarryoverEnabled(),
-      settingsRepo.getCarryoverCutoff()
-    );
-    const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
-    const used = user.annualAllowance + carryover - remaining;
-    const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
-
-    const cutoff = settingsRepo.getCarryoverCutoff();
-    const carryoverUnused = carryover - breakdown.usedFromCarryover;
-    const [cutoffMonth, cutoffDay] = cutoff.split("-");
-    const cutoffDisplay = `${cutoffDay}.${cutoffMonth}.${year}`;
-
-    const lang = user.language;
-    const lines: string[] = [];
-
-    // --- Budget section ---
-    lines.push(t("balance.total", lang, { days: String(user.annualAllowance) }));
-    if (carryover > 0) {
-      lines.push(`+ ${t("balance.carryover", lang, { days: String(carryover) })}`);
-      lines.push(`= *${t("balance.budget_total", lang, { days: String(user.annualAllowance + carryover) })}*`);
-    } else if (user.carryoverDays > 0 && settingsRepo.isCarryoverEnabled()) {
-      lines.push(`~${t("balance.carryover", lang, { days: String(user.carryoverDays) })}~ _(${t("balance.carryover_expired", lang, { days: String(user.carryoverDays), date: cutoffDisplay })})_`);
-    }
-
-    // --- Usage section ---
-    lines.push("");
-    lines.push(t("balance.used", lang, { days: String(used) }));
-    if (carryover > 0 && used > 0) {
-      lines.push(`  └ ${t("balance.used_from_carryover", lang, { days: String(breakdown.usedFromCarryover) })}`);
-      lines.push(`  └ ${t("balance.used_from_allowance", lang, { days: String(breakdown.usedFromAllowance) })}`);
-    }
-
-    // --- Remaining ---
-    lines.push("");
-    lines.push(`*${t("balance.remaining", lang, { days: String(remaining) })}*`);
-
-    // --- Carryover warning (prominent, at bottom) ---
-    if (carryover > 0 && carryoverUnused > 0) {
-      lines.push("");
-      lines.push(`:warning: *${t("balance.carryover_warning", lang, { days: String(carryoverUnused), date: cutoffDisplay })}*`);
-    }
-
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: {
-        type: "modal",
-        title: { type: "plain_text", text: `${t("balance.title", lang)} ${year}` },
-        close: { type: "plain_text", text: "Back" },
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: lines.join("\n"),
-            },
-          },
-        ],
-      },
+    const snapshot = await getBalanceSnapshot(getDb(), user);
+    await openOrPush(client, body, {
+      type: "modal",
+      title: { type: "plain_text", text: `${t("balance.title", user.language)} ${snapshot.year}` },
+      close: { type: "plain_text", text: t("common.back", user.language) },
+      blocks: balanceBlocks(snapshot, user.language),
     });
   });
 
-  // Menu: show list (push modal view)
   app.action("show_list", async ({ ack, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const requestRepo = createRequestRepo(db);
-    const settingsRepo = createSettingsRepo(db);
-    const bundesland = settingsRepo.getBundesland();
-
-    const user = userRepo.findById(body.user.id);
+    const user = currentUser(body.user.id);
     if (!user) return;
+    await openOrPush(client, body, await buildMyHolidaysView(user));
+  });
 
-    const requests = requestRepo.listByUser(user.slackId);
-
-    // Fetch holidays for ALL years represented in user's requests (not just current year)
-    const year = new Date().getFullYear();
-    const allYears = [...new Set(requests.flatMap((r) => [
-      Number(r.startDate.slice(0, 4)),
-      Number(r.endDate.slice(0, 4)),
-    ]))];
-    if (!allYears.includes(year)) allYears.push(year);
-    const publicHolidays = bundesland ? await getHolidayDatesForYears(allYears, bundesland) : [];
-
-    // Calculate source breakdown for approved requests
-    const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-    const carryover = getEffectiveCarryover(
-      user.carryoverDays,
-      settingsRepo.isCarryoverEnabled(),
-      settingsRepo.getCarryoverCutoff()
-    );
-    const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
-
-    const blocks: any[] = [];
-
-    if (requests.length === 0) {
-      blocks.push({
-        type: "section",
-        text: { type: "mrkdwn", text: t("list.empty", user.language) },
-      });
-    } else {
-      for (const r of requests) {
-        const status = t(`list.status.${r.status}`, user.language);
-        const halfDayInfo = [
-          r.halfDayStart ? `(${t("request.half_day_start", user.language)})` : "",
-          r.halfDayEnd ? `(${t("request.half_day_end", user.language)})` : "",
-        ].filter(Boolean).join(" ");
-        const days = calculateRequestDays(r.startDate, r.endDate, r.halfDayStart, r.halfDayEnd, publicHolidays);
-
-        // Show source pot for approved requests when carryover is active
-        let sourceInfo = "";
-        if (r.status === "approved" && carryover > 0) {
-          const source = breakdown.requestSources.get(r.id);
-          if (source) {
-            sourceInfo = ` · _${t(`list.source_${source}`, user.language)}_`;
-          }
-        }
-
-        blocks.push({
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `${r.startDate} → ${r.endDate} ${halfDayInfo} (${days}d${sourceInfo})\n*${status}*${r.reason ? `\n> ${r.reason}` : ""}`,
-          },
-        });
-        blocks.push({ type: "divider" });
-      }
-    }
-
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: {
-        type: "modal",
-        title: { type: "plain_text", text: t("list.title", user.language) },
-        close: { type: "plain_text", text: "Back" },
-        blocks,
-      },
+  app.action("my_holidays_more", async ({ ack, action, body, client }) => {
+    await ack();
+    const user = currentUser(body.user.id);
+    if (!user) return;
+    const offset = Number((action as any).value) || 0;
+    await client.views.update({
+      view_id: (body as any).view.id,
+      view: await buildMyHolidaysView(user, offset),
     });
   });
 
-  // Menu: show public holidays (push modal view)
   app.action("show_holidays", async ({ ack, body, client }) => {
     await ack();
-    const db = getDb();
-    const userRepo = createUserRepo(db);
-    const settingsRepo = createSettingsRepo(db);
-    const bundesland = settingsRepo.getBundesland();
-
-    const user = userRepo.findById(body.user.id);
+    const user = currentUser(body.user.id);
     if (!user) return;
 
-    const year = new Date().getFullYear();
-
+    const lang = user.language;
+    const bundesland = createSettingsRepo(getDb()).getBundesland();
+    const year = new Date().getUTCFullYear();
     const blocks: any[] = [];
 
     if (!bundesland) {
-      blocks.push({
-        type: "section",
-        text: { type: "mrkdwn", text: t("holidays.no_bundesland", user.language) },
-      });
+      blocks.push({ type: "section", text: { type: "mrkdwn", text: t("holidays.no_bundesland", lang) } });
     } else {
       const holidays = await getPublicHolidaysForYear(year, bundesland);
-      for (const h of holidays) {
-        const name = user.language === "de" ? h.nameDe : h.name;
-        blocks.push({
-          type: "section",
-          text: { type: "mrkdwn", text: `*${h.date}* — ${name}` },
-        });
-      }
+      const today = todayIso();
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: holidays
+            .map((h) => {
+              const name = lang === "de" ? h.nameDe : h.name;
+              const past = h.date < today;
+              return `${past ? "" : "*"}${formatDate(h.date, lang)}${past ? "" : "*"}  ·  ${name}`;
+            })
+            .join("\n"),
+        },
+      });
     }
 
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: {
-        type: "modal",
-        title: { type: "plain_text", text: t("holidays.title", user.language, { year: String(year) }) },
-        close: { type: "plain_text", text: "Back" },
-        blocks,
-      },
+    await openOrPush(client, body, {
+      type: "modal",
+      title: { type: "plain_text", text: t("holidays.title", lang, { year: String(year) }) },
+      close: { type: "plain_text", text: t("common.back", lang) },
+      blocks,
     });
   });
 
-  // Menu: toggle language
   app.action("toggle_language", async ({ ack, body, client }) => {
     await ack();
     const db = getDb();
     const userRepo = createUserRepo(db);
     const user = userRepo.findById(body.user.id);
     if (!user) return;
+
     const newLang = user.language === "en" ? "de" : "en";
     userRepo.setLanguage(user.slackId, newLang);
+    const updated = { ...user, language: newLang };
+
+    if (isHomeSurface(body)) {
+      await refreshHome(client, updated);
+      return;
+    }
 
     await client.views.update({
-      view_id: (body as any).view?.id,
+      view_id: (body as any).view.id,
       view: buildMainMenuModal(newLang, user.isAdmin),
     });
   });
 
-  // When start date changes, update end date picker to default to the selected start date
-  app.action("start_date", async ({ ack, body, client }) => {
+  // --------------------------------------------- live preview in the request form
+  // Any change to the dates or the length re-renders the view. views.update
+  // replaces the whole thing, so the draft carries every in-progress value.
+  const rerender = async ({ ack, body, client }: any) => {
+    await ack();
+    const user = currentUser(body.user.id);
+    if (!user) return;
+
+    const view = body.view;
+    if (!view?.state?.values) return;
+
+    const draft = readDraft(view.state.values);
+    const preview = await previewRequest(getDb(), user, draft, user.language);
+
+    await client.views.update({
+      view_id: view.id,
+      hash: view.hash,
+      view: buildRequestModal(user.language, draft, preview),
+    });
+  };
+
+  app.action("start_date", rerender);
+  app.action("end_date", rerender);
+  app.action("half_days", rerender);
+  app.action("half_choice", rerender);
+
+  // ---------------------------------------------------------------- overview
+  app.action("open_overview", async ({ ack, body, client }) => {
     await ack();
     const db = getDb();
+    const user = currentUser(body.user.id);
+    if (!user) return;
+
+    const requestRepo = createRequestRepo(db);
+    const settingsRepo = createSettingsRepo(db);
+    const bundesland = settingsRepo.getBundesland();
     const userRepo = createUserRepo(db);
-    const user = userRepo.findById(body.user.id);
-    const lang = user?.language ?? "en";
+    const year = new Date().getUTCFullYear();
+    const today = todayIso();
 
-    const view = (body as any).view;
-    const values = view?.state?.values;
-    const selectedStartDate = values?.start_date_block?.start_date?.selected_date;
-    const selectedEndDate = values?.end_date_block?.end_date?.selected_date;
+    // Balances are admin-only; the absence calendar is for everyone, since
+    // "is anyone else away then?" is what stops the clash before it happens.
+    const balances = user.isAdmin
+      ? await Promise.all(
+          userRepo.getAll().map(async (u) => {
+            const snapshot = await getBalanceSnapshot(db, u, year);
+            return { user: u, used: snapshot.used, remaining: snapshot.remaining, carryover: snapshot.carryover };
+          })
+        )
+      : [];
 
-    // Only update if start date is set and end date is either empty or before start date
-    if (selectedStartDate && (!selectedEndDate || selectedEndDate < selectedStartDate)) {
-      const updatedModal = buildRequestModal(lang, selectedStartDate);
+    const allUpcoming = requestRepo.getUpcomingApproved(today);
+    const publicHolidays = bundesland
+      ? await getHolidayDatesForYears(yearsSpannedBy(allUpcoming, year), bundesland)
+      : [];
 
-      // Preserve the currently selected half-day options
-      const selectedHalfDays = values?.half_days_block?.half_days?.selected_options ?? [];
-      if (selectedHalfDays.length > 0) {
-        const halfDaysBlock = updatedModal.blocks.find((b: any) => b.block_id === "half_days_block");
-        if (halfDaysBlock) {
-          (halfDaysBlock.element as any).initial_options = selectedHalfDays;
-        }
-      }
+    const upcoming = allUpcoming.map((r) => ({
+      request: r,
+      days: calculateRequestDays(r.startDate, r.endDate, r.halfDayStart, r.halfDayEnd, publicHolidays),
+    }));
 
-      // Preserve reason text
-      const reasonValue = values?.reason_block?.reason?.value;
-      if (reasonValue) {
-        const reasonBlock = updatedModal.blocks.find((b: any) => b.block_id === "reason_block");
-        if (reasonBlock) {
-          (reasonBlock.element as any).initial_value = reasonValue;
-        }
-      }
-
-      await client.views.update({
-        view_id: view.id,
-        hash: view.hash,
-        view: updatedModal,
-      });
-    }
+    await openOrPush(client, body, buildOverviewModal(user.language, balances, upcoming, today, user.isAdmin));
   });
 
-  // Admin: team overview
-  app.action("open_overview", async ({ ack, body, client }) => {
+  app.action("overview_more", async ({ ack, action, body, client }) => {
+    await ack();
+    const user = currentUser(body.user.id);
+    if (!user) return;
+
+    const db = getDb();
+    const requestRepo = createRequestRepo(db);
+    const bundesland = createSettingsRepo(db).getBundesland();
+    const today = todayIso();
+    const year = new Date().getUTCFullYear();
+
+    const allUpcoming = requestRepo.getUpcomingApproved(today);
+    const publicHolidays = bundesland
+      ? await getHolidayDatesForYears(yearsSpannedBy(allUpcoming, year), bundesland)
+      : [];
+    const upcoming = allUpcoming.map((r) => ({
+      request: r,
+      days: calculateRequestDays(r.startDate, r.endDate, r.halfDayStart, r.halfDayEnd, publicHolidays),
+    }));
+
+    await client.views.update({
+      view_id: (body as any).view.id,
+      view: buildOverviewModal(user.language, [], upcoming, today, user.isAdmin, Number((action as any).value) || 0),
+    });
+  });
+
+  // ------------------------------------------------------------ cancellation
+  app.action(/^cancel_request_\d+$/, async ({ ack, action, body, client }) => {
     await ack();
     const db = getDb();
     const userRepo = createUserRepo(db);
     const requestRepo = createRequestRepo(db);
-    const settingsRepo = createSettingsRepo(db);
-    const bundesland = settingsRepo.getBundesland();
 
-    const admin = userRepo.findById(body.user.id);
-    if (!admin?.isAdmin) return;
+    const user = userRepo.findById(body.user.id);
+    if (!user) return;
 
-    const year = new Date().getFullYear();
-    const carryoverEnabled = settingsRepo.isCarryoverEnabled();
-    const carryoverCutoff = settingsRepo.getCarryoverCutoff();
+    const requestId = Number((action as any).value);
+    const request = requestRepo.findById(requestId);
 
-    // Build balance for each user
-    const allUsers = userRepo.getAll();
+    // Never trust the action id alone — a user may only cancel their own request
+    if (!request || request.userId !== user.slackId) return;
 
-    // Collect all years from all users' approved requests for correct holiday lookup
-    const allApproved = allUsers.flatMap((u) => requestRepo.getApprovedForUserInYear(u.slackId, year));
-    const overviewYears = [...new Set(allApproved.flatMap((r) => [
-      Number(r.startDate.slice(0, 4)),
-      Number(r.endDate.slice(0, 4)),
-    ]))];
-    if (!overviewYears.includes(year)) overviewYears.push(year);
-    const publicHolidays = bundesland ? await getHolidayDatesForYears(overviewYears, bundesland) : [];
+    const eligibility = canUserCancel(request, todayIso());
+    if (!eligibility.allowed) {
+      await sendDM(client, user.slackId, t(`cancel.blocked_${eligibility.reason}`, user.language));
+      return;
+    }
 
-    const balances = allUsers.map((user) => {
-      const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-      const carryover = getEffectiveCarryover(user.carryoverDays, carryoverEnabled, carryoverCutoff);
-      const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
-      const used = user.annualAllowance + carryover - remaining;
-      return { user, used, remaining, carryover };
-    });
+    const wasApproved = request.status === "approved";
+    requestRepo.cancel(requestId, user.slackId);
 
-    // Get upcoming/current vacations (from today, next 3 months)
-    const today = new Date().toISOString().slice(0, 10);
-    const allUpcoming = requestRepo.getUpcomingApproved(today);
-    const threeMonthsOut = new Date();
-    threeMonthsOut.setMonth(threeMonthsOut.getMonth() + 3);
-    const cutoff = threeMonthsOut.toISOString().slice(0, 10);
+    if (isHomeSurface(body)) {
+      await refreshHome(client, user);
+    } else {
+      await client.views.update({
+        view_id: (body as any).view.id,
+        view: await buildMyHolidaysView(user),
+      });
+      await refreshHome(client, user);
+    }
 
-    const upcoming = allUpcoming
-      .filter((r) => r.startDate <= cutoff)
-      .map((r) => ({
-        request: r,
-        days: calculateRequestDays(r.startDate, r.endDate, r.halfDayStart, r.halfDayEnd, publicHolidays),
-      }));
+    await sendDM(
+      client,
+      user.slackId,
+      t("cancel.done", user.language, { range: formatRange(request.startDate, request.endDate, user.language) })
+    );
 
-    await client.views.push({
-      trigger_id: (body as any).trigger_id,
-      view: buildOverviewModal(admin.language, balances, upcoming),
-    });
+    // Admins lose the approve/reject buttons on a withdrawn request, so silence
+    // here would leave them acting on stale information.
+    const noticeKey = wasApproved ? "cancel.admin_notice_approved" : "cancel.admin_notice_pending";
+    await sendDMs(
+      client,
+      userRepo
+        .getAdmins()
+        .filter((admin) => admin.slackId !== user.slackId)
+        .map((admin) => ({
+          userId: admin.slackId,
+          text: t(noticeKey, admin.language, {
+            name: user.name,
+            range: formatRange(request.startDate, request.endDate, admin.language),
+          }),
+        }))
+    );
   });
+}
 
-  // Acknowledge half_days checkboxes action (no-op, values read on submit)
-  app.action("half_days", async ({ ack }) => {
-    await ack();
-  });
+// ---------------------------------------------------------------------------
+
+async function openReviewModal(client: any, body: any, requestId: number, action: "approve" | "reject") {
+  const db = getDb();
+  const userRepo = createUserRepo(db);
+  const requestRepo = createRequestRepo(db);
+
+  const admin = userRepo.findById(body.user.id);
+  if (!admin?.isAdmin) return;
+
+  const request = requestRepo.findById(requestId);
+  if (!request || request.status !== "pending") {
+    await sendDM(client, admin.slackId, t("approval.no_longer_pending", admin.language));
+    return;
+  }
+
+  const requester = userRepo.findById(request.userId);
+  if (!requester) return;
+
+  const context = await getRequestContext(db, requester, request);
+  await openOrPush(client, body, buildReviewModal(admin.language, action, request, requester.name, context));
+}
+
+/**
+ * Apply an approve/reject decision. Re-checks that the request is still pending
+ * — an employee can withdraw between the admin DM being posted and the button
+ * being clicked.
+ */
+export async function applyDecision(
+  client: any,
+  body: any,
+  requestId: number,
+  action: "approve" | "reject",
+  comment: string | null,
+  updateSourceMessage: boolean
+): Promise<boolean> {
+  const db = getDb();
+  const userRepo = createUserRepo(db);
+  const requestRepo = createRequestRepo(db);
+
+  const admin = userRepo.findById(body.user.id);
+  if (!admin?.isAdmin) return false;
+
+  const request = requestRepo.findById(requestId);
+  if (!request || request.status !== "pending") {
+    if (updateSourceMessage) {
+      await updateMessage(client, body, t("approval.no_longer_pending", admin.language));
+    } else {
+      await sendDM(client, admin.slackId, t("approval.no_longer_pending", admin.language));
+    }
+    return false;
+  }
+
+  if (action === "approve") {
+    requestRepo.approve(requestId, admin.slackId, comment);
+  } else {
+    requestRepo.reject(requestId, admin.slackId, comment);
+  }
+
+  const requester = userRepo.findById(request.userId);
+  if (requester) {
+    const range = formatRange(request.startDate, request.endDate, requester.language);
+    const outcomeKey = action === "approve" ? "approval.approved" : "approval.rejected";
+    const lines = [t(outcomeKey, requester.language, { range })];
+    if (comment) lines.push(t("approval.comment", requester.language, { comment }));
+    await sendDM(client, requester.slackId, lines.join("\n"));
+    await refreshHome(client, requester);
+  }
+
+  if (updateSourceMessage) {
+    const range = formatRange(request.startDate, request.endDate, admin.language);
+    const doneKey = action === "approve" ? "approval.approved_by_you" : "approval.rejected_by_you";
+    await updateMessage(
+      client,
+      body,
+      t(doneKey, admin.language, { name: requester?.name ?? request.userId, range })
+    );
+  }
+
+  await refreshHome(client, admin);
+  return true;
+}
+
+/** Replace the buttons on the DM the admin acted from, so it can't be re-clicked. */
+async function updateMessage(client: any, body: any, text: string) {
+  const ts = body?.message?.ts;
+  if (!ts) return;
+  try {
+    await client.chat.update({ channel: body.channel?.id ?? body.user.id, ts, text, blocks: [] });
+  } catch (err) {
+    console.error("[slack] could not update source message:", err);
+  }
 }

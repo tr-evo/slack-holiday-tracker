@@ -1,153 +1,152 @@
 import type { App } from "@slack/bolt";
 import { getDb } from "../db/connection.js";
-import { createUserRepo } from "../db/repositories/userRepo.js";
+import { createUserRepo, type User } from "../db/repositories/userRepo.js";
 import { createRequestRepo } from "../db/repositories/requestRepo.js";
-import { buildMainMenuModal } from "../modals/mainMenu.js";
-import { buildRequestModal } from "../modals/requestModal.js";
-import { calculateRemainingDays, calculateUsageBreakdown, getEffectiveCarryover } from "../services/allowance.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { getHolidayDatesForYear, getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
-import { sendDM } from "../services/slack.js";
+import { getBalanceSnapshot, yearsSpannedBy } from "../services/balance.js";
+import { getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
+import { calculateRequestDays } from "../services/allowance.js";
+import { formatDate, formatRange, todayIso } from "../services/dates.js";
+import { buildMainMenuModal } from "../modals/mainMenu.js";
+import { buildRequestModal, EMPTY_DRAFT } from "../modals/requestModal.js";
+import { balanceBlocks, describeRequest, formatDays, statusLabel } from "../modals/shared.js";
 import { t } from "../i18n/t.js";
+import { refreshHome } from "./views.js";
 
-function ensureUser(slackId: string, name: string) {
-  const db = getDb();
-  const userRepo = createUserRepo(db);
+function ensureUser(slackId: string, name: string): User {
+  const userRepo = createUserRepo(getDb());
   userRepo.upsert({ slackId, name });
   return userRepo.findById(slackId)!;
 }
 
 export function registerHolidayHandlers(app: App) {
-  app.command("/holiday", async ({ command, ack, client }) => {
+  app.command("/holiday", async ({ command, ack, client, respond }) => {
     await ack();
+
     const subcommand = command.text.trim().toLowerCase();
     const user = ensureUser(command.user_id, command.user_name);
-    const userId = command.user_id;
+    const lang = user.language;
+    const db = getDb();
+
+    // Answers appear where the question was asked. These used to open a DM
+    // channel and post there, so the reply arrived somewhere else entirely,
+    // with an unread badge, as if a person had messaged you.
+    const reply = (blocks: any[], text: string) =>
+      respond({ response_type: "ephemeral", text, blocks });
 
     if (subcommand === "request") {
       await client.views.open({
         trigger_id: command.trigger_id,
-        view: buildRequestModal(user.language),
+        view: buildRequestModal(lang, EMPTY_DRAFT),
       });
       return;
     }
 
     if (subcommand === "balance") {
-      const db = getDb();
-      const requestRepo = createRequestRepo(db);
-      const settingsRepo = createSettingsRepo(db);
-      const bundesland = settingsRepo.getBundesland();
-      const year = new Date().getFullYear();
-      const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
-      // Fetch holidays for all years the approved requests span (handles cross-year requests)
-      const approvedYears = [...new Set(approved.flatMap((r) => [
-        Number(r.startDate.slice(0, 4)),
-        Number(r.endDate.slice(0, 4)),
-      ]))];
-      if (!approvedYears.includes(year)) approvedYears.push(year);
-      const publicHolidays = bundesland ? await getHolidayDatesForYears(approvedYears, bundesland) : [];
-      const carryover = getEffectiveCarryover(
-        user.carryoverDays,
-        settingsRepo.isCarryoverEnabled(),
-        settingsRepo.getCarryoverCutoff()
+      const snapshot = await getBalanceSnapshot(db, user);
+      await reply(
+        [
+          { type: "header", text: { type: "plain_text", text: `${t("balance.title", lang)} ${snapshot.year}` } },
+          ...balanceBlocks(snapshot, lang),
+        ],
+        `${t("balance.title", lang)}: ${formatDays(snapshot.remaining, lang)}`
       );
-      const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
-      const used = user.annualAllowance + carryover - remaining;
-
-      const cutoff = settingsRepo.getCarryoverCutoff();
-      const [cutoffMonth, cutoffDay] = cutoff.split("-");
-      const cutoffDisplay = `${cutoffDay}.${cutoffMonth}.${year}`;
-
-      // Calculate unused carryover (consistent with modal view)
-      const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
-      const carryoverUnused = carryover - breakdown.usedFromCarryover;
-
-      const lang = user.language;
-      const lines: string[] = [];
-
-      lines.push(`*${t("balance.title", lang)} ${year}*`);
-      lines.push("");
-
-      // --- Budget section ---
-      lines.push(t("balance.total", lang, { days: String(user.annualAllowance) }));
-      if (carryover > 0) {
-        lines.push(`+ ${t("balance.carryover", lang, { days: String(carryover) })}`);
-        lines.push(`= *${t("balance.budget_total", lang, { days: String(user.annualAllowance + carryover) })}*`);
-      } else if (user.carryoverDays > 0 && settingsRepo.isCarryoverEnabled()) {
-        lines.push(`~${t("balance.carryover", lang, { days: String(user.carryoverDays) })}~ _(${t("balance.carryover_expired", lang, { days: String(user.carryoverDays), date: cutoffDisplay })})_`);
-      }
-
-      // --- Usage section ---
-      lines.push("");
-      lines.push(t("balance.used", lang, { days: String(used) }));
-      if (carryover > 0 && used > 0) {
-        lines.push(`  └ ${t("balance.used_from_carryover", lang, { days: String(breakdown.usedFromCarryover) })}`);
-        lines.push(`  └ ${t("balance.used_from_allowance", lang, { days: String(breakdown.usedFromAllowance) })}`);
-      }
-
-      // --- Remaining ---
-      lines.push("");
-      lines.push(`*${t("balance.remaining", lang, { days: String(remaining) })}*`);
-
-      // --- Carryover warning (prominent, at bottom) ---
-      if (carryover > 0 && carryoverUnused > 0) {
-        lines.push("");
-        lines.push(`:warning: *${t("balance.carryover_warning", lang, { days: String(carryoverUnused), date: cutoffDisplay })}*`);
-      }
-
-      await sendDM(client, userId, lines.join("\n"));
       return;
     }
 
     if (subcommand === "list") {
-      const db = getDb();
       const requestRepo = createRequestRepo(db);
+      const bundesland = createSettingsRepo(db).getBundesland();
       const requests = requestRepo.listByUser(user.slackId);
 
       if (requests.length === 0) {
-        await sendDM(client, userId, t("list.empty", user.language));
+        await reply(
+          [{ type: "section", text: { type: "mrkdwn", text: t("list.empty", lang) } }],
+          t("list.empty", lang)
+        );
         return;
       }
 
-      const lines = requests.map((r) => {
-        const status = t(`list.status.${r.status}`, user.language);
-        const halfDayInfo = [
-          r.halfDayStart ? `(${t("request.half_day_start", user.language)})` : "",
-          r.halfDayEnd ? `(${t("request.half_day_end", user.language)})` : "",
-        ].filter(Boolean).join(" ");
-        const reason = r.reason ? ` — _${r.reason}_` : "";
-        return `• ${r.startDate} → ${r.endDate} ${halfDayInfo} — *${status}*${reason}`;
+      const publicHolidays = bundesland
+        ? await getHolidayDatesForYears(yearsSpannedBy(requests, new Date().getUTCFullYear()), bundesland)
+        : [];
+
+      const lines = requests.slice(0, 15).map((r) => {
+        const days = calculateRequestDays(r.startDate, r.endDate, r.halfDayStart, r.halfDayEnd, publicHolidays);
+        return `${describeRequest(r, days, lang)}  ·  ${statusLabel(r.status, lang)}`;
       });
 
-      await sendDM(client, userId, `*${t("list.title", user.language)}*\n${lines.join("\n")}`);
+      const blocks: any[] = [
+        { type: "header", text: { type: "plain_text", text: t("list.title", lang) } },
+        { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
+      ];
+
+      if (requests.length > 15) {
+        blocks.push({
+          type: "context",
+          elements: [{ type: "mrkdwn", text: t("common.show_more", lang, { shown: "15", total: String(requests.length) }) }],
+        });
+      }
+
+      blocks.push({
+        type: "actions",
+        elements: [{
+          type: "button",
+          action_id: "show_list",
+          text: { type: "plain_text", text: t("list.manage", lang) },
+        }],
+      });
+
+      await reply(blocks, t("list.title", lang));
       return;
     }
 
     if (subcommand === "public") {
-      const db = getDb();
-      const settingsRepo = createSettingsRepo(db);
-      const bundesland = settingsRepo.getBundesland();
-      const year = new Date().getFullYear();
+      const bundesland = createSettingsRepo(db).getBundesland();
+      const year = new Date().getUTCFullYear();
 
       if (!bundesland) {
-        await sendDM(client, userId, t("holidays.no_bundesland", user.language));
+        await reply(
+          [{ type: "section", text: { type: "mrkdwn", text: t("holidays.no_bundesland", lang) } }],
+          t("holidays.no_bundesland", lang)
+        );
         return;
       }
 
       const holidays = await getPublicHolidaysForYear(year, bundesland);
-      const lines = holidays.map((h) => {
-        const name = user.language === "de" ? h.nameDe : h.name;
-        return `• ${h.date} — ${name}`;
-      });
+      const today = todayIso();
+      const text = holidays
+        .map((h) => {
+          const name = lang === "de" ? h.nameDe : h.name;
+          const upcoming = h.date >= today;
+          return `${upcoming ? "*" : ""}${formatDate(h.date, lang)}${upcoming ? "*" : ""}  ·  ${name}`;
+        })
+        .join("\n");
 
-      await sendDM(client, userId, `*${t("holidays.title", user.language, { year: String(year) })}*\n${lines.join("\n")}`);
+      await reply(
+        [
+          { type: "header", text: { type: "plain_text", text: t("holidays.title", lang, { year: String(year) }) } },
+          { type: "section", text: { type: "mrkdwn", text } },
+        ],
+        t("holidays.title", lang, { year: String(year) })
+      );
       return;
     }
 
-    // Default: open main menu modal
+    if (subcommand === "help") {
+      await reply(
+        [{ type: "section", text: { type: "mrkdwn", text: t("help.body", lang) } }],
+        t("help.body", lang)
+      );
+      return;
+    }
+
     await client.views.open({
       trigger_id: command.trigger_id,
-      view: buildMainMenuModal(user.language, user.isAdmin),
+      view: buildMainMenuModal(lang, user.isAdmin),
     });
+
+    // First contact for most people — make sure the Home tab is populated
+    await refreshHome(client, user);
   });
 }

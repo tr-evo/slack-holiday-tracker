@@ -16,14 +16,17 @@
 
 ## Features
 
-- `/holiday` command opens an interactive menu
-- **Request holidays** with start/end dates, half-day options, and optional reason
-- **View balance** — remaining days based on annual allowance
-- **View request history** with status (pending/approved/rejected)
-- **Admin panel** — approve/reject requests, manage allowances, toggle admins
-- **Import public holidays** per German Bundesland via [feiertage-api.de](https://feiertage-api.de)
-- **Retroactive entries** — add holidays taken before the bot was introduced
-- **Language toggle** — switch between German and English per user
+- **Home tab** — balance, your requests, and who else is off, with nothing typed
+- **Request holidays** with a live day count: see the cost, the public holidays it
+  skips, and what it leaves you with *before* submitting
+- **Cancel your own holiday** — withdraw a pending request, or cancel an approved
+  one that has not started yet; admins are notified
+- **Approve or reject with a reason**, with the requester's balance and any
+  clashing absences shown alongside the decision
+- **Admin views** — Approvals, People, and Settings, each saving only its own thing
+- **Retroactive entries** — paste a year of history in German or ISO date formats
+- **German public holidays** computed offline per Bundesland via `feiertagejs`
+- **Bilingual (DE/EN)** per user, including localized date formatting
 - Connects via **Socket Mode** (websocket) — no public URL or reverse proxy needed
 
 ## Quick Start
@@ -69,7 +72,7 @@ The SQLite database is persisted in `./data/`. The bot connects outbound via web
 - [Slack Bolt](https://slack.dev/bolt-js) — Slack app framework
 - [TypeScript](https://www.typescriptlang.org/) — type-safe Node.js
 - [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) — embedded SQLite
-- [feiertage-api.de](https://feiertage-api.de) — German public holiday data
+- [feiertagejs](https://github.com/sfakir/feiertagejs) — German public holidays, computed offline
 
 ## Project Structure
 
@@ -77,9 +80,9 @@ The SQLite database is persisted in `./data/`. The bot connects outbound via web
 src/
   app.ts                  # Entry point
   db/                     # Schema, connection, repositories
-  handlers/               # Slash command, actions, admin, submissions
-  modals/                 # Slack Block Kit modal builders
-  services/               # Business logic (allowance calc, holiday import)
+  handlers/               # Slash command, actions, admin, submissions, home tab
+  modals/                 # Slack Block Kit view builders
+  services/               # Business logic (allowances, dates, balances, caching)
   i18n/                   # Translation files (en.json, de.json)
 ```
 
