@@ -1,13 +1,14 @@
 import type Database from "better-sqlite3";
 import { createRequestRepo, type HolidayRequest } from "../db/repositories/requestRepo.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import type { User } from "../db/repositories/userRepo.js";
+import { createUserRepo, type User } from "../db/repositories/userRepo.js";
 import { getHolidayDatesForYears } from "./publicHolidays.js";
-import { todayIso } from "./dates.js";
+import { formatDate, todayIso } from "./dates.js";
 import {
   calculateCarryoverIn,
   calculateRequestDays,
   calculateYearPosition,
+  cutoffDate,
   type CarryoverPolicy,
 } from "./allowance.js";
 
@@ -64,7 +65,7 @@ export async function getBalanceSnapshot(
   const bundesland = settingsRepo.getBundesland();
 
   const allApproved = requestRepo.getApprovedForUser(user.slackId);
-  const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
+  const approved = allApproved.filter((r) => Number(r.startDate.slice(0, 4)) === year);
   const publicHolidays = bundesland
     ? await getHolidayDatesForYears(yearsSpannedBy(allApproved, year), bundesland)
     : [];
@@ -76,13 +77,9 @@ export async function getBalanceSnapshot(
     cutoff: settingsRepo.getCarryoverCutoff(),
   };
 
-  // Without an explicit start, the ledger begins with the earliest recorded holiday.
-  const startYear = user.carryoverStartYear
-    ?? Math.min(year, ...allApproved.map((r) => Number(r.startDate.slice(0, 4))));
-
   const carryoverIn = calculateCarryoverIn({
     year,
-    startYear,
+    startYear: user.carryoverStartYear ?? year,
     openingCarryover: user.carryoverDays,
     allowance: user.annualAllowance,
     requests: allApproved,
@@ -109,7 +106,7 @@ export async function getBalanceSnapshot(
     grantedCarryover: carryoverIn,
     carryoverLapsed: position.carryoverLapsed,
     carryoverEnabled: policy.enabled,
-    carryoverExpires: policy.expires && year >= (policy.expiresFromYear ?? 0),
+    carryoverExpires: position.expiring,
     carryoverCutoff: policy.cutoff,
     budget: user.annualAllowance + carryover,
     used: position.used,
@@ -123,10 +120,27 @@ export async function getBalanceSnapshot(
   };
 }
 
-/** `31.03.2026` — the day this year's carryover stops counting. */
-export function carryoverCutoffDisplay(cutoff: string, year: number): string {
-  const [month, day] = cutoff.split("-");
-  return `${day}.${month}.${year}`;
+/** `31.03.2026` (de) / `31 Mar 2026` (en): the day this year's carryover stops counting. */
+export function carryoverCutoffDisplay(cutoff: string, year: number, lang: string): string {
+  return formatDate(cutoffDate(year, cutoff), lang);
+}
+
+/**
+ * Freeze everything before this year at its current result. The walk over closed
+ * years uses today's allowance and settings, so changing those would otherwise
+ * rewrite history, including days people were already told had lapsed.
+ */
+export async function rebaseCarryover(db: Database.Database, user: User, year = new Date().getUTCFullYear()): Promise<void> {
+  const { grantedCarryover } = await getBalanceSnapshot(db, user, year);
+  const users = createUserRepo(db);
+  users.setCarryoverDays(user.slackId, grantedCarryover);
+  users.setCarryoverStartYear(user.slackId, year);
+}
+
+/** Call before changing a carryover setting. With carryover off there is nothing to freeze. */
+export async function rebaseAllCarryover(db: Database.Database): Promise<void> {
+  if (!createSettingsRepo(db).isCarryoverEnabled()) return;
+  for (const user of createUserRepo(db).getAll()) await rebaseCarryover(db, user);
 }
 
 export interface OverlappingHoliday {
@@ -151,7 +165,7 @@ export async function getRequestContext(
   user: User,
   request: HolidayRequest
 ): Promise<RequestContext> {
-  const snapshot = await getBalanceSnapshot(db, user);
+  const snapshot = await getBalanceSnapshot(db, user, Number(request.startDate.slice(0, 4)));
   const requestRepo = createRequestRepo(db);
   const settingsRepo = createSettingsRepo(db);
   const bundesland = settingsRepo.getBundesland();

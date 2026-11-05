@@ -14,7 +14,7 @@ import { buildBatchPastHolidayModal, buildNachtragenPreviewModal, type PreviewEn
 import { parseDateRanges, type ParsedDateRange } from "../services/batchParser.js";
 import { getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
 import { calculateRequestDays } from "../services/allowance.js";
-import { getRequestContext, yearsSpannedBy } from "../services/balance.js";
+import { getRequestContext, rebaseAllCarryover, rebaseCarryover, yearsSpannedBy } from "../services/balance.js";
 import { searchMembers } from "../services/memberDirectory.js";
 import { formatRange, todayIso } from "../services/dates.js";
 import { sendDM } from "../services/slack.js";
@@ -112,18 +112,26 @@ export function registerAdminHandlers(app: App) {
 
     userRepo.upsert({ slackId: picked.id, name: picked.name });
 
-    const allowance = values.allowance_block?.admin_allowance?.value;
-    if (allowance != null && allowance !== "") userRepo.setAllowance(picked.id, Number(allowance));
+    const before = userRepo.findById(picked.id)!;
+    const readNumber = (value: string | null | undefined) => (value != null && value !== "" ? Number(value) : null);
+    const allowance = readNumber(values.allowance_block?.admin_allowance?.value);
+    const carryoverDays = readNumber(values.carryover_days_block?.admin_carryover_days?.value);
+    const startYear = readNumber(values.carryover_start_year_block?.admin_carryover_start_year?.value);
 
-    const carryoverDays = values.carryover_days_block?.admin_carryover_days?.value;
-    if (carryoverDays != null && carryoverDays !== "") userRepo.setCarryoverDays(picked.id, Number(carryoverDays));
+    const openingChanged =
+      (carryoverDays != null && carryoverDays !== before.carryoverDays) ||
+      (startYear != null && startYear !== before.carryoverStartYear);
+    const allowanceChanged = allowance != null && allowance !== before.annualAllowance;
 
-    // Only when the field was on the form; emptied, it goes back to automatic.
-    const startYearBlock = values.carryover_start_year_block;
-    if (startYearBlock) {
-      const startYear = startYearBlock.admin_carryover_start_year?.value;
-      userRepo.setCarryoverStartYear(picked.id, startYear ? Number(startYear) : null);
+    // A new allowance applies from this year on, not to the years already over.
+    if (allowanceChanged && !openingChanged && createSettingsRepo(db).isCarryoverEnabled()) {
+      await rebaseCarryover(db, before);
     }
+    if (openingChanged) {
+      if (carryoverDays != null) userRepo.setCarryoverDays(picked.id, carryoverDays);
+      if (startYear != null) userRepo.setCarryoverStartYear(picked.id, startYear);
+    }
+    if (allowanceChanged) userRepo.setAllowance(picked.id, allowance);
 
     const target = userRepo.findById(picked.id);
     if (target) {
@@ -172,7 +180,9 @@ export function registerAdminHandlers(app: App) {
     const admin = requireAdmin(body.user.id);
     if (!admin) return;
 
-    const settingsRepo = createSettingsRepo(getDb());
+    const db = getDb();
+    const settingsRepo = createSettingsRepo(db);
+    await rebaseAllCarryover(db);
     settingsRepo.set("carryover_enabled", settingsRepo.isCarryoverEnabled() ? "false" : "true");
 
     await client.views.update({
@@ -186,12 +196,16 @@ export function registerAdminHandlers(app: App) {
     const admin = requireAdmin(body.user.id);
     if (!admin) return;
 
-    const settingsRepo = createSettingsRepo(getDb());
+    const db = getDb();
+    const settingsRepo = createSettingsRepo(db);
+    await rebaseAllCarryover(db);
     const turningOn = !settingsRepo.isCarryoverExpiring();
     settingsRepo.set("carryover_expires", turningOn ? "true" : "false");
-    // Never retroactive by accident: nobody was warned about the years already over.
-    if (turningOn && settingsRepo.getCarryoverExpiresFrom() == null) {
-      settingsRepo.set("carryover_expires_from", String(new Date().getUTCFullYear() + 1));
+    // Never retroactive by accident, also not when an old year is still stored.
+    // Two years ahead, so a full year of advance notices fits before it applies.
+    const year = new Date().getUTCFullYear();
+    if (turningOn && (settingsRepo.getCarryoverExpiresFrom() ?? 0) <= year) {
+      settingsRepo.set("carryover_expires_from", String(year + 2));
     }
 
     await client.views.update({
@@ -219,13 +233,18 @@ export function registerAdminHandlers(app: App) {
     }
 
     await ack();
-    const settingsRepo = createSettingsRepo(getDb());
+    const db = getDb();
+    const settingsRepo = createSettingsRepo(db);
 
     const bundesland = values.bundesland_block?.admin_bundesland?.selected_option?.value;
     if (bundesland) settingsRepo.set("bundesland", bundesland);
-    if (cutoff) settingsRepo.set("carryover_cutoff", cutoff.trim());
+
     const expiresFrom = values.carryover_expires_from_block?.carryover_expires_from?.value;
-    if (expiresFrom) settingsRepo.set("carryover_expires_from", expiresFrom);
+    const cutoffChanged = Boolean(cutoff) && cutoff!.trim() !== settingsRepo.getCarryoverCutoff();
+    const expiresFromChanged = Boolean(expiresFrom) && Number(expiresFrom) !== settingsRepo.getCarryoverExpiresFrom();
+    if (cutoffChanged || expiresFromChanged) await rebaseAllCarryover(db);
+    if (cutoffChanged) settingsRepo.set("carryover_cutoff", cutoff!.trim());
+    if (expiresFromChanged) settingsRepo.set("carryover_expires_from", expiresFrom!);
 
     await sendDM(client, admin.slackId, t("admin.saved_settings", admin.language));
   });

@@ -6,7 +6,7 @@ import { t } from "../i18n/t.js";
 import { formatDays } from "../modals/shared.js";
 import { cutoffDate } from "./allowance.js";
 import { carryoverCutoffDisplay, getBalanceSnapshot, type BalanceSnapshot } from "./balance.js";
-import { todayIso } from "./dates.js";
+import { formatDate, todayIso } from "./dates.js";
 import { sendDM } from "./slack.js";
 
 export type ReminderKind = "year_start" | "end_jan" | "end_feb" | "mid_mar" | "lapsed";
@@ -55,18 +55,25 @@ export function reminderSchedule(year: number, cutoff: string): { kind: Reminder
   ];
 }
 
-/** The latest reminder that has come due, if it is recent enough to still send. */
-export function dueReminder(today: string, cutoff: string): ReminderKind | null {
+/**
+ * The latest reminder that has come due, if it is recent enough to still send.
+ * Last year's schedule counts too: a cutoff late in December lapses in January.
+ */
+export function dueReminder(today: string, cutoff: string): { kind: ReminderKind; year: number } | null {
   const year = Number(today.slice(0, 4));
-  const due = reminderSchedule(year, cutoff).filter((r) => r.date <= today).pop();
+  const due = [year - 1, year]
+    .flatMap((y) => reminderSchedule(y, cutoff).map((r) => ({ ...r, year: y })))
+    .filter((r) => r.date <= today)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .pop();
   if (!due) return null;
   const age = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${due.date}T00:00:00Z`)) / 86_400_000;
-  return age <= GRACE_DAYS ? due.kind : null;
+  return age <= GRACE_DAYS ? { kind: due.kind, year: due.year } : null;
 }
 
 /**
- * The year before expiry starts nothing can lapse yet, so everyone gets an advance
- * notice instead: what is not taken by the first cutoff lapses then.
+ * The year before expiry starts nothing can lapse yet, so an advance notice goes out
+ * instead: to everyone at the start of the year, then to those with carryover left.
  */
 function announcementFor(kind: ReminderKind, snapshot: BalanceSnapshot, expiresFrom: number, lang: string): { text: string; days: number } | null {
   if (kind === "lapsed") return null;
@@ -75,7 +82,7 @@ function announcementFor(kind: ReminderKind, snapshot: BalanceSnapshot, expiresF
     text: t("reminder.announcement", lang, {
       from: String(expiresFrom),
       last_year: String(expiresFrom - 1),
-      date: carryoverCutoffDisplay(snapshot.carryoverCutoff, expiresFrom),
+      date: carryoverCutoffDisplay(snapshot.carryoverCutoff, expiresFrom, lang),
       remaining: formatDays(snapshot.remaining, lang),
     }),
     days: snapshot.remaining,
@@ -85,13 +92,14 @@ function announcementFor(kind: ReminderKind, snapshot: BalanceSnapshot, expiresF
 /** The message and the days it is about, or null if this person needs none. */
 function reminderFor(kind: ReminderKind, snapshot: BalanceSnapshot, lang: string): { text: string; days: number } | null {
   const { year, carryoverCutoff: cutoff } = snapshot;
-  const date = carryoverCutoffDisplay(cutoff, year);
+  const date = carryoverCutoffDisplay(cutoff, year, lang);
 
   if (kind === "year_start") {
     const annual = t("reminder.year_start", lang, {
       year: String(year),
       allowance: String(snapshot.allowance),
-      next_cutoff: carryoverCutoffDisplay(cutoff, year + 1),
+      year_end: formatDate(`${year}-12-31`, lang),
+      next_cutoff: carryoverCutoffDisplay(cutoff, year + 1, lang),
     });
     if (snapshot.carryoverUnused <= 0) return { text: annual, days: 0 };
     const carried = t("reminder.year_start_carryover", lang, { days: formatDays(snapshot.carryoverUnused, lang), date });
@@ -121,31 +129,34 @@ function reminderFor(kind: ReminderKind, snapshot: BalanceSnapshot, lang: string
 /** Send what is due today. Safe to call repeatedly: each notice goes out once. */
 export async function runCarryoverReminders(db: Database.Database, client: any, today = todayIso()): Promise<void> {
   const settings = createSettingsRepo(db);
-  const year = Number(today.slice(0, 4));
   if (!settings.isCarryoverEnabled() || !settings.isCarryoverExpiring()) return;
+
+  const due = dueReminder(today, settings.getCarryoverCutoff());
+  if (!due) return;
+  const { kind, year } = due;
+
   const expiresFrom = settings.getCarryoverExpiresFrom() ?? 0;
   if (year < expiresFrom - 1) return;
   const announcing = year < expiresFrom;
-
-  const kind = dueReminder(today, settings.getCarryoverCutoff());
-  if (!kind) return;
 
   const notices = createNoticeRepo(db);
   const users: User[] = createUserRepo(db).getAll();
 
   for (const user of users) {
     if (notices.wasSent(user.slackId, year, kind)) continue;
-    const snapshot = await getBalanceSnapshot(db, user, year, today);
-    const reminder = announcing
-      ? announcementFor(kind, snapshot, expiresFrom, user.language)
-      : reminderFor(kind, snapshot, user.language);
-    if (!reminder) continue;
 
+    // One person failing must not cost everyone after them the notice. Nothing is
+    // recorded on failure, so the next hourly check tries this person again.
     try {
+      const snapshot = await getBalanceSnapshot(db, user, year, today);
+      const reminder = announcing
+        ? announcementFor(kind, snapshot, expiresFrom, user.language)
+        : reminderFor(kind, snapshot, user.language);
+      if (!reminder) continue;
+
       await sendDM(client, user.slackId, reminder.text);
       notices.record(user.slackId, year, kind, reminder.days);
     } catch (err) {
-      // Not recorded, so the next hourly check tries this person again.
       console.error(`[reminders] ${kind} to ${user.slackId} failed:`, err);
     }
   }

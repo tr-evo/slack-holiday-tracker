@@ -56,7 +56,7 @@ describe("database schema", () => {
     expect(row.value).toBe("30");
   });
 
-  it("moves a stored carryover into the current year when adding the start year", () => {
+  it("opens the current year for everyone when adding the start year", () => {
     const legacy = new Database(":memory:");
     legacy.exec(`CREATE TABLE users (
       slack_id TEXT PRIMARY KEY, name TEXT NOT NULL, annual_allowance INTEGER NOT NULL DEFAULT 30,
@@ -71,7 +71,7 @@ describe("database schema", () => {
     const startYear = (id: string) =>
       (legacy.prepare("SELECT carryover_start_year y FROM users WHERE slack_id = ?").get(id) as any).y;
     expect(startYear("A")).toBe(new Date().getUTCFullYear());
-    expect(startYear("B")).toBeNull();
+    expect(startYear("B")).toBe(new Date().getUTCFullYear());
   });
 
   it("stores half days in the carryover column", () => {

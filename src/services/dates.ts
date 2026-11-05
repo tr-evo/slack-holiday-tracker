@@ -90,21 +90,21 @@ export interface ParsedDateRange {
 
 type HalfMarker = "morning" | "afternoon" | "half" | "from_midday" | "until_midday";
 
-const HALF_MARKERS: [RegExp, HalfMarker][] = [
-  [/^(?:nur\s+)?(?:vormittags|morning)$/i, "morning"],
-  [/^(?:nur\s+)?(?:nachmittags|afternoon)$/i, "afternoon"],
-  [/^(?:halber\s+tag|half\s+day|halb|half)$/i, "half"],
-  [/^(?:ab\s+mittags|from\s+midday)$/i, "from_midday"],
-  [/^(?:bis\s+mittags|until\s+midday)$/i, "until_midday"],
+const HALF_MARKERS: [string, HalfMarker][] = [
+  ["(?:nur\\s+)?(?:vormittags|morning)", "morning"],
+  ["(?:nur\\s+)?(?:nachmittags|afternoon)", "afternoon"],
+  ["halber\\s+tag|half\\s+day|halb|half", "half"],
+  ["ab\\s+mittags|from\\s+midday", "from_midday"],
+  ["bis\\s+mittags|until\\s+midday", "until_midday"],
 ];
-const HALF_SUFFIX = /[\s,]+((?:nur\s+)?(?:vormittags|morning|nachmittags|afternoon)|halber\s+tag|half\s+day|halb|half|ab\s+mittags|from\s+midday|bis\s+mittags|until\s+midday)\s*$/i;
+const HALF_SUFFIX = new RegExp(`[\\s,]+(${HALF_MARKERS.map(([source]) => source).join("|")})\\s*$`, "i");
 
 /** Peel half-day words off the end first: "bis mittags" contains the range separator. */
 function splitHalfMarkers(line: string): { dates: string; markers: HalfMarker[] } {
   let dates = line.trim();
   const markers: HalfMarker[] = [];
   for (let match = dates.match(HALF_SUFFIX); match; match = dates.match(HALF_SUFFIX)) {
-    const marker = HALF_MARKERS.find(([pattern]) => pattern.test(match![1].trim()));
+    const marker = HALF_MARKERS.find(([source]) => new RegExp(`^(?:${source})$`, "i").test(match![1].trim()));
     if (marker) markers.push(marker[1]);
     dates = dates.slice(0, match.index).trim();
   }

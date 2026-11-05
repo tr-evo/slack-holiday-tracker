@@ -259,7 +259,6 @@ export function buildAdminSettingsModal(
     blocks.push({
       type: "input",
       block_id: "carryover_expires_from_block",
-      optional: true,
       element: {
         type: "number_input",
         action_id: "carryover_expires_from",

@@ -61,7 +61,6 @@ export function initializeSchema(db: Database.Database): void {
   // already stored meant "carried into the current year", so it opens that year.
   if (!cols.some((c: any) => c.name === "carryover_start_year")) {
     db.exec("ALTER TABLE users ADD COLUMN carryover_start_year INTEGER");
-    db.prepare("UPDATE users SET carryover_start_year = ? WHERE carryover_days > 0")
-      .run(new Date().getUTCFullYear());
+    db.prepare("UPDATE users SET carryover_start_year = ?").run(new Date().getUTCFullYear());
   }
 }

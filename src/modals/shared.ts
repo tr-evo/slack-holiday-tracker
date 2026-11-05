@@ -58,7 +58,7 @@ export function statusLabel(status: string, lang: string): string {
 /** The balance summary, as the header of the Home tab and the balance modal. */
 export function balanceBlocks(snapshot: BalanceSnapshot, lang: string): any[] {
   const blocks: any[] = [];
-  const cutoff = carryoverCutoffDisplay(snapshot.carryoverCutoff, snapshot.year);
+  const cutoff = carryoverCutoffDisplay(snapshot.carryoverCutoff, snapshot.year, lang);
 
   blocks.push({
     type: "section",

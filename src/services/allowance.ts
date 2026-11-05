@@ -74,6 +74,8 @@ function daysUpToCutoff(req: ApprovedRequest, cutoffIso: string, publicHolidays:
 }
 
 export interface YearPosition {
+  /** Whether expiry applies to this year at all */
+  expiring: boolean;
   /** Carried in from the previous year, before anything lapsed */
   carryoverIn: number;
   /** Lapsed at the cutoff; 0 until the cutoff has passed */
@@ -130,6 +132,7 @@ export function calculateYearPosition(input: {
   const carryoverLapsed = lapsed ? carryoverLeft : 0;
 
   return {
+    expiring,
     carryoverIn,
     carryoverLapsed,
     carryoverUnused: lapsed ? 0 : carryoverLeft,

@@ -6,7 +6,7 @@ export interface User {
   annualAllowance: number;
   /** Opening balance carried into carryoverStartYear; later years are derived */
   carryoverDays: number;
-  /** null: start with the earliest recorded holiday */
+  /** Stored, never derived from the requests: entering an old holiday must not grant years of leave */
   carryoverStartYear: number | null;
   language: string;
   isAdmin: boolean;
@@ -41,9 +41,9 @@ export function createUserRepo(db: Database.Database): UserRepo {
     upsert({ slackId, name }) {
       const defaultAllowance = Number(process.env.DEFAULT_ALLOWANCE) || 30;
       db.prepare(
-        `INSERT INTO users (slack_id, name, annual_allowance) VALUES (?, ?, ?)
+        `INSERT INTO users (slack_id, name, annual_allowance, carryover_start_year) VALUES (?, ?, ?, ?)
          ON CONFLICT(slack_id) DO UPDATE SET name = excluded.name`
-      ).run(slackId, name, defaultAllowance);
+      ).run(slackId, name, defaultAllowance, new Date().getUTCFullYear());
     },
 
     findById(slackId) {

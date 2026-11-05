@@ -3,7 +3,7 @@ import Database from "better-sqlite3";
 import { initializeSchema } from "../../db/schema.js";
 import { createUserRepo } from "../../db/repositories/userRepo.js";
 import { createSettingsRepo } from "../../db/repositories/settingsRepo.js";
-import { getBalanceSnapshot } from "../balance.js";
+import { getBalanceSnapshot, rebaseCarryover } from "../balance.js";
 
 type Row = [string, string, number?, number?];
 
@@ -38,6 +38,7 @@ describe("getBalanceSnapshot", () => {
     const users = createUserRepo(db);
     users.upsert({ slackId: "U1", name: "u" });
     users.setAllowance("U1", 28);
+    users.setCarryoverStartYear("U1", 2024);
     const insert = db.prepare(
       `INSERT INTO holiday_requests (user_id, start_date, end_date, half_day_start, half_day_end, status)
        VALUES ('U1', ?, ?, ?, ?, 'approved')`
@@ -57,7 +58,7 @@ describe("getBalanceSnapshot", () => {
     settings.set("bundesland", "BW");
   });
 
-  it("derives carryover from the recorded history without any input", async () => {
+  it("derives carryover from the recorded history from the start year on", async () => {
     setup(RECORDED);
     const s = await snapshot();
     expect(s).toMatchObject({
@@ -125,9 +126,56 @@ describe("getBalanceSnapshot", () => {
     expect(s).toMatchObject({ grantedCarryover: 0, carryover: 0, remaining: 7 });
   });
 
-  it("opens the first recorded year with nothing for someone new", async () => {
+  it("does not raise a balance when someone enters an old holiday", async () => {
     setup([["2026-06-15", "2026-06-18"]]);
-    const s = await snapshot();
-    expect(s).toMatchObject({ grantedCarryover: 0, remaining: 24 });
+    const users = createUserRepo(db);
+    users.setCarryoverStartYear("U1", 2026);
+    const before = (await snapshot()).remaining;
+    db.prepare(
+      "INSERT INTO holiday_requests (user_id, start_date, end_date, status) VALUES ('U1', '2020-03-02', '2020-03-02', 'approved')"
+    ).run();
+    expect((await snapshot()).remaining).toBe(before);
+  });
+
+  it("starts a new user in the year they were created, with nothing carried", async () => {
+    createUserRepo(db).upsert({ slackId: "NEW", name: "new" });
+    const user = createUserRepo(db).findById("NEW")!;
+    expect(user.carryoverStartYear).toBe(new Date().getUTCFullYear());
+    expect((await getBalanceSnapshot(db, user)).grantedCarryover).toBe(0);
+  });
+
+  it("does not apply the opening balance again in a later year without holidays", async () => {
+    setup([]);
+    const users = createUserRepo(db);
+    users.setCarryoverDays("U1", 5);
+    users.setCarryoverStartYear("U1", 2026);
+    createSettingsRepo(db).set("carryover_expires", "false");
+    expect((await snapshot(2027, "2027-06-01")).grantedCarryover).toBe(33);
+  });
+
+  describe("rebaseCarryover", () => {
+    it("keeps closed years as they were when the allowance changes", async () => {
+      setup(COMPLETE);
+      const users = createUserRepo(db);
+      users.setCarryoverDays("U1", 4.5);
+      users.setCarryoverStartYear("U1", 2024);
+      createSettingsRepo(db).set("carryover_expires", "false");
+
+      await rebaseCarryover(db, users.findById("U1")!, 2026);
+      users.setAllowance("U1", 20);
+
+      const s = await snapshot();
+      expect(s.grantedCarryover).toBe(9.5);
+      expect(s.remaining).toBe(8.5); // 20 + 9.5 - 21
+    });
+
+    it("keeps what already lapsed when expiry is turned off", async () => {
+      setup(RECORDED);
+      const users = createUserRepo(db);
+      await rebaseCarryover(db, users.findById("U1")!, 2027);
+      const carried = users.findById("U1")!.carryoverDays;
+      createSettingsRepo(db).set("carryover_expires", "false");
+      expect((await snapshot(2027, "2027-06-01")).grantedCarryover).toBe(carried);
+    });
   });
 });

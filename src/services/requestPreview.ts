@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import type { User } from "../db/repositories/userRepo.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import { calculateRequestDays } from "./allowance.js";
+import { calculateRequestDays, calculateYearPosition } from "./allowance.js";
 import { getBalanceSnapshot, yearsSpannedBy } from "./balance.js";
 import { getHolidayDatesForYears, getHolidaysInRange } from "./publicHolidays.js";
 
@@ -32,7 +32,7 @@ export async function previewRequest(
 ): Promise<PreviewResult | undefined> {
   if (!draft.startDate || !draft.endDate) return undefined;
 
-  const snapshot = await getBalanceSnapshot(db, user);
+  const snapshot = await getBalanceSnapshot(db, user, Number(draft.startDate.slice(0, 4)));
   const base = { days: 0, holidayNames: [], remaining: snapshot.remaining, remainingAfter: snapshot.remaining };
 
   if (draft.endDate < draft.startDate) return { ...base, problem: "order" };
@@ -56,11 +56,26 @@ export async function previewRequest(
   const holidayNames = await getHolidaysInRange(draft.startDate, draft.endDate, bundesland, lang);
   const remainingAfter = snapshot.remaining - days;
 
+  // Carryover can only pay for days up to the cutoff, so look at where the year
+  // ends up with this request in it, not just at today's remaining days.
+  const closed = calculateYearPosition({
+    year: snapshot.year,
+    allowance: snapshot.allowance,
+    carryoverIn: snapshot.grantedCarryover,
+    requests: [
+      ...snapshot.approved,
+      { id: -1, startDate: draft.startDate, endDate: draft.endDate, halfDayStart: draft.halfDayStart, halfDayEnd: draft.halfDayEnd },
+    ],
+    publicHolidays: [...snapshot.publicHolidays, ...publicHolidays],
+    policy: { enabled: snapshot.carryoverEnabled, expires: snapshot.carryoverExpires, cutoff: snapshot.carryoverCutoff },
+    today: `${snapshot.year + 1}-12-31`,
+  });
+
   return {
     days,
     holidayNames,
     remaining: snapshot.remaining,
     remainingAfter,
-    problem: days === 0 ? "zero" : days > snapshot.remaining ? "insufficient" : undefined,
+    problem: days === 0 ? "zero" : closed.remaining < 0 ? "insufficient" : undefined,
   };
 }

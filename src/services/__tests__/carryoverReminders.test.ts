@@ -29,8 +29,12 @@ describe("reminderSchedule", () => {
 
 describe("dueReminder", () => {
   it("is the latest reminder that has come due", () => {
-    expect(dueReminder("2027-01-29", "03-31")).toBe("end_jan");
-    expect(dueReminder("2027-02-02", "03-31")).toBe("end_jan");
+    expect(dueReminder("2027-01-29", "03-31")).toEqual({ kind: "end_jan", year: 2027 });
+    expect(dueReminder("2027-02-02", "03-31")).toEqual({ kind: "end_jan", year: 2027 });
+  });
+
+  it("finds a lapse notice that falls into the next January", () => {
+    expect(dueReminder("2027-01-01", "12-31")).toEqual({ kind: "lapsed", year: 2026 });
   });
 
   it("is nothing before the first one and once one is too old", () => {
@@ -139,6 +143,24 @@ describe("runCarryoverReminders", () => {
     expect(sent[0].text).toContain("3 Tage Übertrag");
     expect(sent[0].text).toContain("verfallen");
     expect(sent[0].text).toContain("28 Tage Resturlaub");
+  });
+
+  it("writes dates for the reader's language", async () => {
+    createUserRepo(db).setLanguage("WITH", "en");
+    await runCarryoverReminders(db, client, "2027-01-04");
+    const text = sent.find((m) => m.channel === "WITH")!.text;
+    expect(text).toContain("31 Dec 2027");
+    expect(text).toContain("31 Mar 2027");
+  });
+
+  it("sends the lapse notice of a late-December cutoff in January, for the year that ended", async () => {
+    createSettingsRepo(db).set("carryover_cutoff", "12-31");
+    createSettingsRepo(db).set("carryover_expires_from", "2026");
+    createUserRepo(db).setCarryoverStartYear("WITH", 2026);
+    await runCarryoverReminders(db, client, "2027-01-01");
+    expect(sent.map((m) => m.channel)).toEqual(["WITH"]);
+    expect(sent[0].text).toContain("5 Tage Übertrag");
+    expect(sent[0].text).toContain("31.12.2026");
   });
 
   it("writes half days the German way", async () => {
