@@ -30,6 +30,15 @@ export function initializeSchema(db: Database.Database): void {
       name_de TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS carryover_notices (
+      user_id TEXT NOT NULL REFERENCES users(slack_id),
+      year INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      days REAL NOT NULL,
+      sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, year, kind)
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

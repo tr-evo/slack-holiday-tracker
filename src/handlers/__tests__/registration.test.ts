@@ -90,7 +90,7 @@ function allViews() {
       buildAdminApprovalsModal(lang, Array.from({ length: 30 }, () => ({ request, requesterName: "A", context }))),
       buildAdminPeopleModal(lang, user, true),
       buildAdminPeopleModal(lang, null, true),
-      buildAdminSettingsModal(lang, { bundesland: "BE", carryoverEnabled: true, carryoverExpires: true, carryoverCutoff: "03-31" }),
+      buildAdminSettingsModal(lang, { bundesland: "BE", carryoverEnabled: true, carryoverExpires: true, carryoverExpiresFrom: 2027, carryoverCutoff: "03-31" }),
       buildUserNachtragenModal(lang),
       buildBatchPastHolidayModal(lang),
       buildNachtragenPreviewModal(lang, [{ range: { startDate: "2026-01-01", endDate: "2026-01-02" }, days: 2 }], "user_nachtragen_confirm", "{}")

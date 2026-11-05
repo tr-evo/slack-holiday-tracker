@@ -144,7 +144,7 @@ describe("view limits", () => {
       assertValidView(buildAdminPeopleModal(lang, user("U1", { isAdmin: true }), true), `people/${lang}`);
       assertValidView(buildAdminPeopleModal(lang, null, false), `people empty/${lang}`);
       assertValidView(
-        buildAdminSettingsModal(lang, { bundesland: "BE", carryoverEnabled: true, carryoverExpires: true, carryoverCutoff: "03-31" }),
+        buildAdminSettingsModal(lang, { bundesland: "BE", carryoverEnabled: true, carryoverExpires: true, carryoverExpiresFrom: 2027, carryoverCutoff: "03-31" }),
         `settings/${lang}`
       );
     });

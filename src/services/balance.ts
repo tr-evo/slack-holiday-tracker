@@ -72,6 +72,7 @@ export async function getBalanceSnapshot(
   const policy: CarryoverPolicy = {
     enabled: settingsRepo.isCarryoverEnabled(),
     expires: settingsRepo.isCarryoverExpiring(),
+    expiresFromYear: settingsRepo.getCarryoverExpiresFrom() ?? undefined,
     cutoff: settingsRepo.getCarryoverCutoff(),
   };
 
@@ -108,7 +109,7 @@ export async function getBalanceSnapshot(
     grantedCarryover: carryoverIn,
     carryoverLapsed: position.carryoverLapsed,
     carryoverEnabled: policy.enabled,
-    carryoverExpires: policy.expires,
+    carryoverExpires: policy.expires && year >= (policy.expiresFromYear ?? 0),
     carryoverCutoff: policy.cutoff,
     budget: user.annualAllowance + carryover,
     used: position.used,

@@ -195,7 +195,7 @@ function peopleView(lang: string, blocks: any[], canSubmit: boolean) {
 
 export function buildAdminSettingsModal(
   lang: string,
-  settings: { bundesland: string; carryoverEnabled: boolean; carryoverExpires: boolean; carryoverCutoff: string }
+  settings: { bundesland: string; carryoverEnabled: boolean; carryoverExpires: boolean; carryoverExpiresFrom: number | null; carryoverCutoff: string }
 ) {
   const bundeslandOptions = Object.entries(BUNDESLAENDER)
     .sort(([, a], [, b]) => a.localeCompare(b, "de"))
@@ -256,6 +256,21 @@ export function buildAdminSettingsModal(
   }
 
   if (settings.carryoverEnabled && settings.carryoverExpires) {
+    blocks.push({
+      type: "input",
+      block_id: "carryover_expires_from_block",
+      optional: true,
+      element: {
+        type: "number_input",
+        action_id: "carryover_expires_from",
+        is_decimal_allowed: false,
+        min_value: "2000",
+        max_value: "2100",
+        ...(settings.carryoverExpiresFrom != null ? { initial_value: String(settings.carryoverExpiresFrom) } : {}),
+      },
+      label: { type: "plain_text", text: t("admin.carryover_expires_from", lang) },
+      hint: { type: "plain_text", text: t("admin.carryover_expires_from_hint", lang) },
+    });
     blocks.push({
       type: "input",
       block_id: "carryover_cutoff_block",

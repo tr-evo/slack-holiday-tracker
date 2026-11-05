@@ -5,6 +5,7 @@ export interface SettingsRepo {
   set(key: string, value: string): void;
   isCarryoverEnabled(): boolean;
   isCarryoverExpiring(): boolean;
+  getCarryoverExpiresFrom(): number | null;
   getCarryoverCutoff(): string;
   getBundesland(): string;
 }
@@ -26,6 +27,11 @@ export function createSettingsRepo(db: Database.Database): SettingsRepo {
 
     isCarryoverExpiring() {
       return this.get("carryover_expires") === "true";
+    },
+
+    getCarryoverExpiresFrom() {
+      const value = this.get("carryover_expires_from");
+      return value ? Number(value) : null;
     },
 
     getCarryoverCutoff() {

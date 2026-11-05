@@ -187,7 +187,12 @@ export function registerAdminHandlers(app: App) {
     if (!admin) return;
 
     const settingsRepo = createSettingsRepo(getDb());
-    settingsRepo.set("carryover_expires", settingsRepo.isCarryoverExpiring() ? "false" : "true");
+    const turningOn = !settingsRepo.isCarryoverExpiring();
+    settingsRepo.set("carryover_expires", turningOn ? "true" : "false");
+    // Never retroactive by accident: nobody was warned about the years already over.
+    if (turningOn && settingsRepo.getCarryoverExpiresFrom() == null) {
+      settingsRepo.set("carryover_expires_from", String(new Date().getUTCFullYear() + 1));
+    }
 
     await client.views.update({
       view_id: (body as any).view.id,
@@ -219,6 +224,8 @@ export function registerAdminHandlers(app: App) {
     const bundesland = values.bundesland_block?.admin_bundesland?.selected_option?.value;
     if (bundesland) settingsRepo.set("bundesland", bundesland);
     if (cutoff) settingsRepo.set("carryover_cutoff", cutoff.trim());
+    const expiresFrom = values.carryover_expires_from_block?.carryover_expires_from?.value;
+    if (expiresFrom) settingsRepo.set("carryover_expires_from", expiresFrom);
 
     await sendDM(client, admin.slackId, t("admin.saved_settings", admin.language));
   });
@@ -394,6 +401,7 @@ function readSettings() {
     bundesland: settingsRepo.getBundesland(),
     carryoverEnabled: settingsRepo.isCarryoverEnabled(),
     carryoverExpires: settingsRepo.isCarryoverExpiring(),
+    carryoverExpiresFrom: settingsRepo.getCarryoverExpiresFrom(),
     carryoverCutoff: settingsRepo.getCarryoverCutoff(),
   };
 }

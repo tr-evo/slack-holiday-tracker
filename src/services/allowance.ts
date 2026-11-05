@@ -52,6 +52,8 @@ export interface CarryoverPolicy {
   enabled: boolean;
   /** When false, unused carryover never lapses and rolls on indefinitely */
   expires: boolean;
+  /** First year expiry applies to, so turning it on is not retroactive. Unset: every year */
+  expiresFromYear?: number;
   /** MM-DD, inclusive: the last day carryover can be spent */
   cutoff: string;
 }
@@ -103,6 +105,7 @@ export function calculateYearPosition(input: {
 }): YearPosition {
   const { year, allowance, carryoverIn, requests, publicHolidays, policy, today } = input;
   const cutoffIso = cutoffDate(year, policy.cutoff);
+  const expiring = policy.expires && year >= (policy.expiresFromYear ?? 0);
 
   let carryoverLeft = carryoverIn;
   let used = 0;
@@ -112,7 +115,7 @@ export function calculateYearPosition(input: {
   const sorted = [...requests].sort((a, b) => a.startDate.localeCompare(b.startDate));
   for (const req of sorted) {
     const days = calculateRequestDays(req.startDate, req.endDate, req.halfDayStart, req.halfDayEnd, publicHolidays);
-    const eligible = policy.expires ? daysUpToCutoff(req, cutoffIso, publicHolidays) : days;
+    const eligible = expiring ? daysUpToCutoff(req, cutoffIso, publicHolidays) : days;
     const fromCarryover = Math.min(eligible, carryoverLeft);
 
     carryoverLeft -= fromCarryover;
@@ -123,7 +126,7 @@ export function calculateYearPosition(input: {
     else requestSources.set(req.id, fromCarryover < days ? "mixed" : "carryover");
   }
 
-  const lapsed = policy.expires && today > cutoffIso;
+  const lapsed = expiring && today > cutoffIso;
   const carryoverLapsed = lapsed ? carryoverLeft : 0;
 
   return {
