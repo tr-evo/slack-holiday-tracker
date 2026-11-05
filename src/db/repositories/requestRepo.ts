@@ -32,7 +32,7 @@ export interface RequestRepo {
   cancel(id: number, cancelledBy: string): void;
   deleteById(id: number): void;
   getPending(): HolidayRequest[];
-  getApprovedForUserInYear(userId: string, year: number): HolidayRequest[];
+  getApprovedForUser(userId: string): HolidayRequest[];
   getUpcomingApproved(fromDate: string): HolidayRequest[];
   getApprovedOverlapping(startDate: string, endDate: string, excludeUserId?: string): HolidayRequest[];
 }
@@ -95,13 +95,10 @@ export function createRequestRepo(db: Database.Database): RequestRepo {
       return db.prepare("SELECT * FROM holiday_requests WHERE status = 'pending' ORDER BY created_at ASC").all().map(rowToRequest);
     },
 
-    getApprovedForUserInYear(userId, year) {
+    getApprovedForUser(userId) {
       return db.prepare(
-        `SELECT * FROM holiday_requests
-         WHERE user_id = ? AND status = 'approved'
-         AND strftime('%Y', start_date) = ?
-         ORDER BY start_date ASC`
-      ).all(userId, String(year)).map(rowToRequest);
+        "SELECT * FROM holiday_requests WHERE user_id = ? AND status = 'approved' ORDER BY start_date ASC"
+      ).all(userId).map(rowToRequest);
     },
 
     getUpcomingApproved(fromDate) {

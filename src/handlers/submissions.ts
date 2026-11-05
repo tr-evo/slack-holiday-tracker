@@ -179,8 +179,8 @@ export function registerSubmissionHandlers(app: App) {
         userId: user.slackId,
         startDate: range.startDate,
         endDate: range.endDate,
-        halfDayStart: false,
-        halfDayEnd: false,
+        halfDayStart: Boolean(range.halfDayStart),
+        halfDayEnd: Boolean(range.halfDayEnd),
         reason: null,
       });
       requestRepo.approve(id, user.slackId, null);

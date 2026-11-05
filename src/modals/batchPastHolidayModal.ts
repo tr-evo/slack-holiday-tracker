@@ -1,7 +1,7 @@
 import { t } from "../i18n/t.js";
 import { formatRange } from "../services/dates.js";
 import type { ParsedDateRange } from "../services/batchParser.js";
-import { formatDays } from "./shared.js";
+import { describeHalfDay, formatDays } from "./shared.js";
 
 export function buildUserNachtragenModal(lang: string) {
   return {
@@ -82,9 +82,15 @@ export function buildNachtragenPreviewModal(
   privateMetadata: string
 ) {
   const totalDays = entries.reduce((sum, e) => sum + e.days, 0);
-  const lines = entries.map(
-    (e) => `• ${formatRange(e.range.startDate, e.range.endDate, lang)}  —  *${formatDays(e.days, lang)}* ${t("nachtragen.days_unit", lang)}`
-  );
+  const lines = entries.map((e) => {
+    const half = describeHalfDay({
+      startDate: e.range.startDate,
+      endDate: e.range.endDate,
+      halfDayStart: Boolean(e.range.halfDayStart),
+      halfDayEnd: Boolean(e.range.halfDayEnd),
+    }, lang);
+    return `• ${formatRange(e.range.startDate, e.range.endDate, lang)}${half ? ` (${half})` : ""}  —  *${formatDays(e.days, lang)}* ${t("nachtragen.days_unit", lang)}`;
+  });
   return {
     type: "modal" as const,
     callback_id: callbackId,

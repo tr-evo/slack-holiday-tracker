@@ -85,7 +85,7 @@ describe("requestRepo", () => {
     const id2 = repo.create({ userId: "U123", startDate: "2026-07-01", endDate: "2026-07-05", halfDayStart: false, halfDayEnd: false, reason: null });
     repo.approve(id2, "ADMIN1", null);
 
-    const approved = repo.getApprovedForUserInYear("U123", 2026);
+    const approved = repo.getApprovedForUser("U123");
     expect(approved).toHaveLength(2);
   });
 
@@ -102,10 +102,10 @@ describe("requestRepo", () => {
   it("stops counting a cancelled request toward the yearly balance", () => {
     const id = repo.create({ userId: "U123", startDate: "2026-09-01", endDate: "2026-09-03", halfDayStart: false, halfDayEnd: false, reason: null });
     repo.approve(id, "ADMIN1", null);
-    expect(repo.getApprovedForUserInYear("U123", 2026)).toHaveLength(1);
+    expect(repo.getApprovedForUser("U123")).toHaveLength(1);
 
     repo.cancel(id, "U123");
-    expect(repo.getApprovedForUserInYear("U123", 2026)).toHaveLength(0);
+    expect(repo.getApprovedForUser("U123")).toHaveLength(0);
   });
 
   it("removes a cancelled request from the upcoming list and the pending queue", () => {

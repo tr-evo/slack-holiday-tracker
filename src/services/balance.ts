@@ -1,13 +1,15 @@
 import type Database from "better-sqlite3";
 import { createRequestRepo, type HolidayRequest } from "../db/repositories/requestRepo.js";
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
-import type { User } from "../db/repositories/userRepo.js";
+import { createUserRepo, type User } from "../db/repositories/userRepo.js";
 import { getHolidayDatesForYears } from "./publicHolidays.js";
+import { formatDate, todayIso } from "./dates.js";
 import {
-  calculateRemainingDays,
+  calculateCarryoverIn,
   calculateRequestDays,
-  calculateUsageBreakdown,
-  getEffectiveCarryover,
+  calculateYearPosition,
+  cutoffDate,
+  type CarryoverPolicy,
 } from "./allowance.js";
 
 /**
@@ -21,17 +23,21 @@ import {
 export interface BalanceSnapshot {
   year: number;
   allowance: number;
-  /** Carryover that still counts today; 0 once past the cutoff */
+  /** Carryover that counts toward this year's budget: carried in, minus what lapsed */
   carryover: number;
-  /** What the user was granted, regardless of the cutoff */
+  /** Carried in from the previous year, before anything lapsed */
   grantedCarryover: number;
+  /** Lapsed at the cutoff; 0 until it has passed */
+  carryoverLapsed: number;
   carryoverEnabled: boolean;
+  carryoverExpires: boolean;
   carryoverCutoff: string;
   budget: number;
   used: number;
   remaining: number;
   usedFromCarryover: number;
   usedFromAllowance: number;
+  /** Not spent yet and still spendable today */
   carryoverUnused: number;
   approved: HolidayRequest[];
   publicHolidays: string[];
@@ -51,48 +57,90 @@ export function yearsSpannedBy(requests: { startDate: string; endDate: string }[
 export async function getBalanceSnapshot(
   db: Database.Database,
   user: User,
-  year = new Date().getUTCFullYear()
+  year = new Date().getUTCFullYear(),
+  today = todayIso()
 ): Promise<BalanceSnapshot> {
   const requestRepo = createRequestRepo(db);
   const settingsRepo = createSettingsRepo(db);
   const bundesland = settingsRepo.getBundesland();
 
-  const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
+  const allApproved = requestRepo.getApprovedForUser(user.slackId);
+  const approved = allApproved.filter((r) => Number(r.startDate.slice(0, 4)) === year);
   const publicHolidays = bundesland
-    ? await getHolidayDatesForYears(yearsSpannedBy(approved, year), bundesland)
+    ? await getHolidayDatesForYears(yearsSpannedBy(allApproved, year), bundesland)
     : [];
 
-  const carryoverEnabled = settingsRepo.isCarryoverEnabled();
-  const carryoverCutoff = settingsRepo.getCarryoverCutoff();
-  const carryover = getEffectiveCarryover(user.carryoverDays, carryoverEnabled, carryoverCutoff);
+  const policy: CarryoverPolicy = {
+    enabled: settingsRepo.isCarryoverEnabled(),
+    expires: settingsRepo.isCarryoverExpiring(),
+    expiresFromYear: settingsRepo.getCarryoverExpiresFrom() ?? undefined,
+    cutoff: settingsRepo.getCarryoverCutoff(),
+  };
 
-  const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
-  const budget = user.annualAllowance + carryover;
-  const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
+  const carryoverIn = calculateCarryoverIn({
+    year,
+    startYear: user.carryoverStartYear ?? year,
+    openingCarryover: user.carryoverDays,
+    allowance: user.annualAllowance,
+    requests: allApproved,
+    publicHolidays,
+    policy,
+  });
+
+  const position = calculateYearPosition({
+    year,
+    allowance: user.annualAllowance,
+    carryoverIn,
+    requests: approved,
+    publicHolidays,
+    policy,
+    today,
+  });
+
+  const carryover = carryoverIn - position.carryoverLapsed;
 
   return {
     year,
     allowance: user.annualAllowance,
     carryover,
-    grantedCarryover: user.carryoverDays,
-    carryoverEnabled,
-    carryoverCutoff,
-    budget,
-    used: budget - remaining,
-    remaining,
-    usedFromCarryover: breakdown.usedFromCarryover,
-    usedFromAllowance: breakdown.usedFromAllowance,
-    carryoverUnused: carryover - breakdown.usedFromCarryover,
+    grantedCarryover: carryoverIn,
+    carryoverLapsed: position.carryoverLapsed,
+    carryoverEnabled: policy.enabled,
+    carryoverExpires: position.expiring,
+    carryoverCutoff: policy.cutoff,
+    budget: user.annualAllowance + carryover,
+    used: position.used,
+    remaining: position.remaining,
+    usedFromCarryover: position.usedFromCarryover,
+    usedFromAllowance: position.usedFromAllowance,
+    carryoverUnused: position.carryoverUnused,
     approved,
     publicHolidays,
-    requestSources: breakdown.requestSources,
+    requestSources: position.requestSources,
   };
 }
 
-/** `31.03.2026` — the day this year's carryover stops counting. */
-export function carryoverCutoffDisplay(cutoff: string, year: number): string {
-  const [month, day] = cutoff.split("-");
-  return `${day}.${month}.${year}`;
+/** `31.03.2026` (de) / `31 Mar 2026` (en): the day this year's carryover stops counting. */
+export function carryoverCutoffDisplay(cutoff: string, year: number, lang: string): string {
+  return formatDate(cutoffDate(year, cutoff), lang);
+}
+
+/**
+ * Freeze everything before this year at its current result. The walk over closed
+ * years uses today's allowance and settings, so changing those would otherwise
+ * rewrite history, including days people were already told had lapsed.
+ */
+export async function rebaseCarryover(db: Database.Database, user: User, year = new Date().getUTCFullYear()): Promise<void> {
+  const { grantedCarryover } = await getBalanceSnapshot(db, user, year);
+  const users = createUserRepo(db);
+  users.setCarryoverDays(user.slackId, grantedCarryover);
+  users.setCarryoverStartYear(user.slackId, year);
+}
+
+/** Call before changing a carryover setting. With carryover off there is nothing to freeze. */
+export async function rebaseAllCarryover(db: Database.Database): Promise<void> {
+  if (!createSettingsRepo(db).isCarryoverEnabled()) return;
+  for (const user of createUserRepo(db).getAll()) await rebaseCarryover(db, user);
 }
 
 export interface OverlappingHoliday {
@@ -117,7 +165,7 @@ export async function getRequestContext(
   user: User,
   request: HolidayRequest
 ): Promise<RequestContext> {
-  const snapshot = await getBalanceSnapshot(db, user);
+  const snapshot = await getBalanceSnapshot(db, user, Number(request.startDate.slice(0, 4)));
   const requestRepo = createRequestRepo(db);
   const settingsRepo = createSettingsRepo(db);
   const bundesland = settingsRepo.getBundesland();

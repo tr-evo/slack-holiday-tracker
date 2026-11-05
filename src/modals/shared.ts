@@ -58,7 +58,7 @@ export function statusLabel(status: string, lang: string): string {
 /** The balance summary, as the header of the Home tab and the balance modal. */
 export function balanceBlocks(snapshot: BalanceSnapshot, lang: string): any[] {
   const blocks: any[] = [];
-  const cutoff = carryoverCutoffDisplay(snapshot.carryoverCutoff, snapshot.year);
+  const cutoff = carryoverCutoffDisplay(snapshot.carryoverCutoff, snapshot.year, lang);
 
   blocks.push({
     type: "section",
@@ -82,7 +82,7 @@ export function balanceBlocks(snapshot: BalanceSnapshot, lang: string): any[] {
     });
   }
 
-  if (snapshot.carryover > 0 && snapshot.carryoverUnused > 0) {
+  if (snapshot.carryoverExpires && snapshot.carryoverUnused > 0) {
     blocks.push({
       type: "section",
       text: {
@@ -90,12 +90,12 @@ export function balanceBlocks(snapshot: BalanceSnapshot, lang: string): any[] {
         text: `:warning: *${t("balance.carryover_warning", lang, { days: formatDays(snapshot.carryoverUnused, lang), date: cutoff })}*`,
       },
     });
-  } else if (snapshot.carryover === 0 && snapshot.grantedCarryover > 0 && snapshot.carryoverEnabled) {
+  } else if (snapshot.carryoverLapsed > 0) {
     blocks.push({
       type: "context",
       elements: [{
         type: "mrkdwn",
-        text: t("balance.carryover_expired", lang, { days: formatDays(snapshot.grantedCarryover, lang), date: cutoff }),
+        text: t("balance.carryover_expired", lang, { days: formatDays(snapshot.carryoverLapsed, lang), date: cutoff }),
       }],
     });
   }

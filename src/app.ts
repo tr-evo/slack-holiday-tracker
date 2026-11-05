@@ -6,6 +6,7 @@ import { registerActionHandlers } from "./handlers/actions.js";
 import { registerSubmissionHandlers } from "./handlers/submissions.js";
 import { registerAdminHandlers } from "./handlers/admin.js";
 import { registerHomeHandlers } from "./handlers/views.js";
+import { startCarryoverReminders } from "./services/carryoverReminders.js";
 
 // Initialize database on startup
 getDb();
@@ -36,4 +37,5 @@ process.on("unhandledRejection", (reason) => {
 (async () => {
   await app.start();
   console.log("Holiday Tracker bot is running!");
+  startCarryoverReminders(app.client, getDb());
 })();

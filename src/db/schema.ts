@@ -30,6 +30,15 @@ export function initializeSchema(db: Database.Database): void {
       name_de TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS carryover_notices (
+      user_id TEXT NOT NULL REFERENCES users(slack_id),
+      year INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      days REAL NOT NULL,
+      sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, year, kind)
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -38,6 +47,7 @@ export function initializeSchema(db: Database.Database): void {
     INSERT OR IGNORE INTO settings (key, value) VALUES ('default_allowance', '30');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_enabled', 'false');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_cutoff', '03-31');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_expires', 'false');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('bundesland', '');
   `);
 
@@ -45,5 +55,12 @@ export function initializeSchema(db: Database.Database): void {
   const cols = db.pragma("table_info(users)") as any[];
   if (!cols.some((c: any) => c.name === "carryover_days")) {
     db.exec("ALTER TABLE users ADD COLUMN carryover_days INTEGER NOT NULL DEFAULT 0");
+  }
+
+  // Migration: carryover is derived per year from an opening balance. A value
+  // already stored meant "carried into the current year", so it opens that year.
+  if (!cols.some((c: any) => c.name === "carryover_start_year")) {
+    db.exec("ALTER TABLE users ADD COLUMN carryover_start_year INTEGER");
+    db.prepare("UPDATE users SET carryover_start_year = ?").run(new Date().getUTCFullYear());
   }
 }
