@@ -58,11 +58,11 @@ const request: HolidayRequest = {
   createdAt: "2026-01-01 00:00:00",
 };
 const user: User = {
-  slackId: "U123", name: "Anna", annualAllowance: 30, carryoverDays: 3,
+  slackId: "U123", name: "Anna", annualAllowance: 30, carryoverDays: 3, carryoverStartYear: 2026,
   language: "de", isAdmin: true,
 };
 const snapshot: BalanceSnapshot = {
-  year: 2026, allowance: 30, carryover: 3, grantedCarryover: 3, carryoverEnabled: true,
+  year: 2026, allowance: 30, carryover: 3, grantedCarryover: 3, carryoverLapsed: 0, carryoverExpires: true, carryoverEnabled: true,
   carryoverCutoff: "03-31", budget: 33, used: 17.5, remaining: 15.5,
   usedFromCarryover: 3, usedFromAllowance: 14.5, carryoverUnused: 0,
   approved: [], publicHolidays: [], requestSources: new Map(),
@@ -90,7 +90,7 @@ function allViews() {
       buildAdminApprovalsModal(lang, Array.from({ length: 30 }, () => ({ request, requesterName: "A", context }))),
       buildAdminPeopleModal(lang, user, true),
       buildAdminPeopleModal(lang, null, true),
-      buildAdminSettingsModal(lang, { bundesland: "BE", carryoverEnabled: true, carryoverCutoff: "03-31" }),
+      buildAdminSettingsModal(lang, { bundesland: "BE", carryoverEnabled: true, carryoverExpires: true, carryoverCutoff: "03-31" }),
       buildUserNachtragenModal(lang),
       buildBatchPastHolidayModal(lang),
       buildNachtragenPreviewModal(lang, [{ range: { startDate: "2026-01-01", endDate: "2026-01-02" }, days: 2 }], "user_nachtragen_confirm", "{}")

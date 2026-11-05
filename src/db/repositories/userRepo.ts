@@ -4,7 +4,10 @@ export interface User {
   slackId: string;
   name: string;
   annualAllowance: number;
+  /** Opening balance carried into carryoverStartYear; later years are derived */
   carryoverDays: number;
+  /** null: start with the earliest recorded holiday */
+  carryoverStartYear: number | null;
   language: string;
   isAdmin: boolean;
 }
@@ -16,6 +19,7 @@ export interface UserRepo {
   setAllowance(slackId: string, allowance: number): void;
   setLanguage(slackId: string, language: string): void;
   setCarryoverDays(slackId: string, days: number): void;
+  setCarryoverStartYear(slackId: string, year: number | null): void;
   getAdmins(): User[];
   getAll(): User[];
 }
@@ -26,6 +30,7 @@ function rowToUser(row: any): User {
     name: row.name,
     annualAllowance: row.annual_allowance,
     carryoverDays: row.carryover_days ?? 0,
+    carryoverStartYear: row.carryover_start_year ?? null,
     language: row.language,
     isAdmin: Boolean(row.is_admin),
   };
@@ -60,6 +65,10 @@ export function createUserRepo(db: Database.Database): UserRepo {
 
     setCarryoverDays(slackId, days) {
       db.prepare("UPDATE users SET carryover_days = ? WHERE slack_id = ?").run(days, slackId);
+    },
+
+    setCarryoverStartYear(slackId, year) {
+      db.prepare("UPDATE users SET carryover_start_year = ? WHERE slack_id = ?").run(year, slackId);
     },
 
     getAdmins() {

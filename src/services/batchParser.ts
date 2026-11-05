@@ -14,6 +14,8 @@ export type { ParsedDateRange };
  *   15.01.2024 - 19.01.2024
  *   15.01.2024 – 19.01.2024
  *   15.01.2024                 (a single day)
+ *   15.01.2024 vormittags      (also nachmittags, or halb when it no longer matters which)
+ *   15.01.2024 bis 19.01.2024 ab mittags     (also bis mittags, or both)
  *
  * Returns the line numbers it could not read, so the form can point at them.
  */

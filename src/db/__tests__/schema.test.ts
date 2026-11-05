@@ -55,4 +55,27 @@ describe("database schema", () => {
     const row = db.prepare("SELECT value FROM settings WHERE key = ?").get("default_allowance") as any;
     expect(row.value).toBe("30");
   });
+
+  it("moves a stored carryover into the current year when adding the start year", () => {
+    const legacy = new Database(":memory:");
+    legacy.exec(`CREATE TABLE users (
+      slack_id TEXT PRIMARY KEY, name TEXT NOT NULL, annual_allowance INTEGER NOT NULL DEFAULT 30,
+      language TEXT NOT NULL DEFAULT 'en', is_admin INTEGER NOT NULL DEFAULT 0,
+      carryover_days INTEGER NOT NULL DEFAULT 0
+    )`);
+    legacy.exec("INSERT INTO users (slack_id, name, carryover_days) VALUES ('A', 'a', 5), ('B', 'b', 0)");
+
+    initializeSchema(legacy);
+    initializeSchema(legacy); // idempotent
+
+    const startYear = (id: string) =>
+      (legacy.prepare("SELECT carryover_start_year y FROM users WHERE slack_id = ?").get(id) as any).y;
+    expect(startYear("A")).toBe(new Date().getUTCFullYear());
+    expect(startYear("B")).toBeNull();
+  });
+
+  it("stores half days in the carryover column", () => {
+    db.exec("INSERT INTO users (slack_id, name, carryover_days) VALUES ('A', 'a', 4.5)");
+    expect((db.prepare("SELECT carryover_days d FROM users").get() as any).d).toBe(4.5);
+  });
 });

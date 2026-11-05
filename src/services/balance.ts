@@ -3,11 +3,12 @@ import { createRequestRepo, type HolidayRequest } from "../db/repositories/reque
 import { createSettingsRepo } from "../db/repositories/settingsRepo.js";
 import type { User } from "../db/repositories/userRepo.js";
 import { getHolidayDatesForYears } from "./publicHolidays.js";
+import { todayIso } from "./dates.js";
 import {
-  calculateRemainingDays,
+  calculateCarryoverIn,
   calculateRequestDays,
-  calculateUsageBreakdown,
-  getEffectiveCarryover,
+  calculateYearPosition,
+  type CarryoverPolicy,
 } from "./allowance.js";
 
 /**
@@ -21,17 +22,21 @@ import {
 export interface BalanceSnapshot {
   year: number;
   allowance: number;
-  /** Carryover that still counts today; 0 once past the cutoff */
+  /** Carryover that counts toward this year's budget: carried in, minus what lapsed */
   carryover: number;
-  /** What the user was granted, regardless of the cutoff */
+  /** Carried in from the previous year, before anything lapsed */
   grantedCarryover: number;
+  /** Lapsed at the cutoff; 0 until it has passed */
+  carryoverLapsed: number;
   carryoverEnabled: boolean;
+  carryoverExpires: boolean;
   carryoverCutoff: string;
   budget: number;
   used: number;
   remaining: number;
   usedFromCarryover: number;
   usedFromAllowance: number;
+  /** Not spent yet and still spendable today */
   carryoverUnused: number;
   approved: HolidayRequest[];
   publicHolidays: string[];
@@ -51,41 +56,69 @@ export function yearsSpannedBy(requests: { startDate: string; endDate: string }[
 export async function getBalanceSnapshot(
   db: Database.Database,
   user: User,
-  year = new Date().getUTCFullYear()
+  year = new Date().getUTCFullYear(),
+  today = todayIso()
 ): Promise<BalanceSnapshot> {
   const requestRepo = createRequestRepo(db);
   const settingsRepo = createSettingsRepo(db);
   const bundesland = settingsRepo.getBundesland();
 
+  const allApproved = requestRepo.getApprovedForUser(user.slackId);
   const approved = requestRepo.getApprovedForUserInYear(user.slackId, year);
   const publicHolidays = bundesland
-    ? await getHolidayDatesForYears(yearsSpannedBy(approved, year), bundesland)
+    ? await getHolidayDatesForYears(yearsSpannedBy(allApproved, year), bundesland)
     : [];
 
-  const carryoverEnabled = settingsRepo.isCarryoverEnabled();
-  const carryoverCutoff = settingsRepo.getCarryoverCutoff();
-  const carryover = getEffectiveCarryover(user.carryoverDays, carryoverEnabled, carryoverCutoff);
+  const policy: CarryoverPolicy = {
+    enabled: settingsRepo.isCarryoverEnabled(),
+    expires: settingsRepo.isCarryoverExpiring(),
+    cutoff: settingsRepo.getCarryoverCutoff(),
+  };
 
-  const remaining = calculateRemainingDays(user.annualAllowance, approved, publicHolidays, carryover);
-  const budget = user.annualAllowance + carryover;
-  const breakdown = calculateUsageBreakdown(carryover, approved, publicHolidays);
+  // Without an explicit start, the ledger begins with the earliest recorded holiday.
+  const startYear = user.carryoverStartYear
+    ?? Math.min(year, ...allApproved.map((r) => Number(r.startDate.slice(0, 4))));
+
+  const carryoverIn = calculateCarryoverIn({
+    year,
+    startYear,
+    openingCarryover: user.carryoverDays,
+    allowance: user.annualAllowance,
+    requests: allApproved,
+    publicHolidays,
+    policy,
+  });
+
+  const position = calculateYearPosition({
+    year,
+    allowance: user.annualAllowance,
+    carryoverIn,
+    requests: approved,
+    publicHolidays,
+    policy,
+    today,
+  });
+
+  const carryover = carryoverIn - position.carryoverLapsed;
 
   return {
     year,
     allowance: user.annualAllowance,
     carryover,
-    grantedCarryover: user.carryoverDays,
-    carryoverEnabled,
-    carryoverCutoff,
-    budget,
-    used: budget - remaining,
-    remaining,
-    usedFromCarryover: breakdown.usedFromCarryover,
-    usedFromAllowance: breakdown.usedFromAllowance,
-    carryoverUnused: carryover - breakdown.usedFromCarryover,
+    grantedCarryover: carryoverIn,
+    carryoverLapsed: position.carryoverLapsed,
+    carryoverEnabled: policy.enabled,
+    carryoverExpires: policy.expires,
+    carryoverCutoff: policy.cutoff,
+    budget: user.annualAllowance + carryover,
+    used: position.used,
+    remaining: position.remaining,
+    usedFromCarryover: position.usedFromCarryover,
+    usedFromAllowance: position.usedFromAllowance,
+    carryoverUnused: position.carryoverUnused,
     approved,
     publicHolidays,
-    requestSources: breakdown.requestSources,
+    requestSources: position.requestSources,
   };
 }
 

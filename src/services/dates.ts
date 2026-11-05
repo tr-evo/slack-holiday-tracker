@@ -83,22 +83,68 @@ function isRealDate(iso: string): boolean {
 export interface ParsedDateRange {
   startDate: string;
   endDate: string;
+  // Only present when true: these travel in a size-limited private_metadata
+  halfDayStart?: boolean;
+  halfDayEnd?: boolean;
+}
+
+type HalfMarker = "morning" | "afternoon" | "half" | "from_midday" | "until_midday";
+
+const HALF_MARKERS: [RegExp, HalfMarker][] = [
+  [/^(?:nur\s+)?(?:vormittags|morning)$/i, "morning"],
+  [/^(?:nur\s+)?(?:nachmittags|afternoon)$/i, "afternoon"],
+  [/^(?:halber\s+tag|half\s+day|halb|half)$/i, "half"],
+  [/^(?:ab\s+mittags|from\s+midday)$/i, "from_midday"],
+  [/^(?:bis\s+mittags|until\s+midday)$/i, "until_midday"],
+];
+const HALF_SUFFIX = /[\s,]+((?:nur\s+)?(?:vormittags|morning|nachmittags|afternoon)|halber\s+tag|half\s+day|halb|half|ab\s+mittags|from\s+midday|bis\s+mittags|until\s+midday)\s*$/i;
+
+/** Peel half-day words off the end first: "bis mittags" contains the range separator. */
+function splitHalfMarkers(line: string): { dates: string; markers: HalfMarker[] } {
+  let dates = line.trim();
+  const markers: HalfMarker[] = [];
+  for (let match = dates.match(HALF_SUFFIX); match; match = dates.match(HALF_SUFFIX)) {
+    const marker = HALF_MARKERS.find(([pattern]) => pattern.test(match![1].trim()));
+    if (marker) markers.push(marker[1]);
+    dates = dates.slice(0, match.index).trim();
+  }
+  return { dates, markers };
+}
+
+/** On one day a half is morning or afternoon; on a range only the ends can be half. */
+function applyHalfMarkers(range: ParsedDateRange, markers: HalfMarker[]): ParsedDateRange | null {
+  if (markers.length === 0) return range;
+
+  if (range.startDate === range.endDate) {
+    if (markers.length > 1) return null;
+    const afternoon = markers[0] === "afternoon" || markers[0] === "from_midday";
+    return { ...range, ...(afternoon ? { halfDayEnd: true } : { halfDayStart: true }) };
+  }
+
+  if (new Set(markers).size !== markers.length) return null;
+  if (markers.some((m) => m !== "from_midday" && m !== "until_midday")) return null;
+  return {
+    ...range,
+    ...(markers.includes("from_midday") ? { halfDayStart: true } : {}),
+    ...(markers.includes("until_midday") ? { halfDayEnd: true } : {}),
+  };
 }
 
 /** Parse one line into a range. Returns null if the line is unusable. */
 export function parseDateRangeLine(line: string): ParsedDateRange | null {
-  const parts = line.split(SEPARATOR).map((p) => p.trim()).filter(Boolean);
+  const { dates, markers } = splitHalfMarkers(line);
+  const parts = dates.split(SEPARATOR).map((p) => p.trim()).filter(Boolean);
 
   if (parts.length === 1) {
     const single = parseFlexibleDate(parts[0]);
-    return single ? { startDate: single, endDate: single } : null;
+    return single ? applyHalfMarkers({ startDate: single, endDate: single }, markers) : null;
   }
 
   if (parts.length === 2) {
     const startDate = parseFlexibleDate(parts[0]);
     const endDate = parseFlexibleDate(parts[1]);
     if (!startDate || !endDate || endDate < startDate) return null;
-    return { startDate, endDate };
+    return applyHalfMarkers({ startDate, endDate }, markers);
   }
 
   return null;

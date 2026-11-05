@@ -11,7 +11,7 @@ import {
 } from "../modals/adminModals.js";
 import { buildManageHolidaysModal, type ManageEntry, type ManageTarget } from "../modals/manageHolidaysModal.js";
 import { buildBatchPastHolidayModal, buildNachtragenPreviewModal, type PreviewEntry } from "../modals/batchPastHolidayModal.js";
-import { parseDateRanges } from "../services/batchParser.js";
+import { parseDateRanges, type ParsedDateRange } from "../services/batchParser.js";
 import { getHolidayDatesForYears, getPublicHolidaysForYear } from "../services/publicHolidays.js";
 import { calculateRequestDays } from "../services/allowance.js";
 import { getRequestContext, yearsSpannedBy } from "../services/balance.js";
@@ -118,6 +118,13 @@ export function registerAdminHandlers(app: App) {
     const carryoverDays = values.carryover_days_block?.admin_carryover_days?.value;
     if (carryoverDays != null && carryoverDays !== "") userRepo.setCarryoverDays(picked.id, Number(carryoverDays));
 
+    // Only when the field was on the form; emptied, it goes back to automatic.
+    const startYearBlock = values.carryover_start_year_block;
+    if (startYearBlock) {
+      const startYear = startYearBlock.admin_carryover_start_year?.value;
+      userRepo.setCarryoverStartYear(picked.id, startYear ? Number(startYear) : null);
+    }
+
     const target = userRepo.findById(picked.id);
     if (target) {
       await sendDM(client, admin.slackId, t("admin.saved_person", admin.language, { name: target.name }));
@@ -167,6 +174,20 @@ export function registerAdminHandlers(app: App) {
 
     const settingsRepo = createSettingsRepo(getDb());
     settingsRepo.set("carryover_enabled", settingsRepo.isCarryoverEnabled() ? "false" : "true");
+
+    await client.views.update({
+      view_id: (body as any).view.id,
+      view: buildAdminSettingsModal(admin.language, readSettings()),
+    });
+  });
+
+  app.action("toggle_carryover_expiry", async ({ ack, body, client }) => {
+    await ack();
+    const admin = requireAdmin(body.user.id);
+    if (!admin) return;
+
+    const settingsRepo = createSettingsRepo(getDb());
+    settingsRepo.set("carryover_expires", settingsRepo.isCarryoverExpiring() ? "false" : "true");
 
     await client.views.update({
       view_id: (body as any).view.id,
@@ -347,8 +368,8 @@ export function registerAdminHandlers(app: App) {
         userId: picked.id,
         startDate: range.startDate,
         endDate: range.endDate,
-        halfDayStart: false,
-        halfDayEnd: false,
+        halfDayStart: Boolean(range.halfDayStart),
+        halfDayEnd: Boolean(range.halfDayEnd),
         reason: null,
       });
       requestRepo.approve(id, admin.slackId, null);
@@ -372,6 +393,7 @@ function readSettings() {
   return {
     bundesland: settingsRepo.getBundesland(),
     carryoverEnabled: settingsRepo.isCarryoverEnabled(),
+    carryoverExpires: settingsRepo.isCarryoverExpiring(),
     carryoverCutoff: settingsRepo.getCarryoverCutoff(),
   };
 }
@@ -421,7 +443,7 @@ async function buildManageView(lang: string, target: ManageTarget | null, offset
   return buildManageHolidaysModal(lang, target, entries, offset);
 }
 
-export async function previewEntries(ranges: { startDate: string; endDate: string }[]): Promise<PreviewEntry[]> {
+export async function previewEntries(ranges: ParsedDateRange[]): Promise<PreviewEntry[]> {
   const bundesland = createSettingsRepo(getDb()).getBundesland();
   const publicHolidays = bundesland
     ? await getHolidayDatesForYears(yearsSpannedBy(ranges, new Date().getUTCFullYear()), bundesland)
@@ -429,6 +451,6 @@ export async function previewEntries(ranges: { startDate: string; endDate: strin
 
   return ranges.map((range) => ({
     range,
-    days: calculateRequestDays(range.startDate, range.endDate, false, false, publicHolidays),
+    days: calculateRequestDays(range.startDate, range.endDate, Boolean(range.halfDayStart), Boolean(range.halfDayEnd), publicHolidays),
   }));
 }

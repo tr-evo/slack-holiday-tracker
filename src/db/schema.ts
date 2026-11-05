@@ -38,6 +38,7 @@ export function initializeSchema(db: Database.Database): void {
     INSERT OR IGNORE INTO settings (key, value) VALUES ('default_allowance', '30');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_enabled', 'false');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_cutoff', '03-31');
+    INSERT OR IGNORE INTO settings (key, value) VALUES ('carryover_expires', 'false');
     INSERT OR IGNORE INTO settings (key, value) VALUES ('bundesland', '');
   `);
 
@@ -45,5 +46,13 @@ export function initializeSchema(db: Database.Database): void {
   const cols = db.pragma("table_info(users)") as any[];
   if (!cols.some((c: any) => c.name === "carryover_days")) {
     db.exec("ALTER TABLE users ADD COLUMN carryover_days INTEGER NOT NULL DEFAULT 0");
+  }
+
+  // Migration: carryover is derived per year from an opening balance. A value
+  // already stored meant "carried into the current year", so it opens that year.
+  if (!cols.some((c: any) => c.name === "carryover_start_year")) {
+    db.exec("ALTER TABLE users ADD COLUMN carryover_start_year INTEGER");
+    db.prepare("UPDATE users SET carryover_start_year = ? WHERE carryover_days > 0")
+      .run(new Date().getUTCFullYear());
   }
 }

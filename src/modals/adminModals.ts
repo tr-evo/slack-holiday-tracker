@@ -123,12 +123,27 @@ export function buildAdminPeopleModal(lang: string, selected: User | null, carry
       element: {
         type: "number_input",
         action_id: "admin_carryover_days",
-        is_decimal_allowed: false,
+        is_decimal_allowed: true,
         min_value: "0",
         max_value: "365",
         initial_value: String(selected.carryoverDays),
       },
       label: { type: "plain_text", text: t("admin.carryover_days", lang) },
+    });
+    blocks.push({
+      type: "input",
+      block_id: "carryover_start_year_block",
+      optional: true,
+      element: {
+        type: "number_input",
+        action_id: "admin_carryover_start_year",
+        is_decimal_allowed: false,
+        min_value: "2000",
+        max_value: "2100",
+        ...(selected.carryoverStartYear != null ? { initial_value: String(selected.carryoverStartYear) } : {}),
+      },
+      label: { type: "plain_text", text: t("admin.carryover_start_year", lang) },
+      hint: { type: "plain_text", text: t("admin.carryover_start_year_hint", lang) },
     });
   }
 
@@ -180,7 +195,7 @@ function peopleView(lang: string, blocks: any[], canSubmit: boolean) {
 
 export function buildAdminSettingsModal(
   lang: string,
-  settings: { bundesland: string; carryoverEnabled: boolean; carryoverCutoff: string }
+  settings: { bundesland: string; carryoverEnabled: boolean; carryoverExpires: boolean; carryoverCutoff: string }
 ) {
   const bundeslandOptions = Object.entries(BUNDESLAENDER)
     .sort(([, a], [, b]) => a.localeCompare(b, "de"))
@@ -223,6 +238,24 @@ export function buildAdminSettingsModal(
   ];
 
   if (settings.carryoverEnabled) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: t(settings.carryoverExpires ? "admin.carryover_expiry_on" : "admin.carryover_expiry_off", lang),
+      },
+      accessory: {
+        type: "button",
+        action_id: "toggle_carryover_expiry",
+        text: {
+          type: "plain_text",
+          text: t(settings.carryoverExpires ? "admin.carryover_expiry_disable" : "admin.carryover_expiry_enable", lang),
+        },
+      },
+    });
+  }
+
+  if (settings.carryoverEnabled && settings.carryoverExpires) {
     blocks.push({
       type: "input",
       block_id: "carryover_cutoff_block",

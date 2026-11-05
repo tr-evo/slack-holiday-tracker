@@ -40,99 +40,132 @@ export function calculateRequestDays(
   return Math.max(0, days);
 }
 
-interface ApprovedRequest {
+export interface ApprovedRequest {
+  id: number;
   startDate: string;
   endDate: string;
   halfDayStart: boolean;
   halfDayEnd: boolean;
 }
 
-export function calculateRemainingDays(
-  annualAllowance: number,
-  approvedRequests: ApprovedRequest[],
-  publicHolidays: string[],
-  carryoverDays: number = 0
-): number {
-  let used = 0;
-  for (const req of approvedRequests) {
-    used += calculateRequestDays(
-      req.startDate,
-      req.endDate,
-      req.halfDayStart,
-      req.halfDayEnd,
-      publicHolidays
-    );
-  }
-  return annualAllowance + carryoverDays - used;
+export interface CarryoverPolicy {
+  enabled: boolean;
+  /** When false, unused carryover never lapses and rolls on indefinitely */
+  expires: boolean;
+  /** MM-DD, inclusive: the last day carryover can be spent */
+  cutoff: string;
 }
 
-export interface UsageBreakdown {
+/** ISO date of the cutoff in a year. Date.UTC normalizes 02-29 in a non-leap year. */
+export function cutoffDate(year: number, cutoff: string): string {
+  const [month, day] = cutoff.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10);
+}
+
+/** The part of a request that falls on or before the cutoff, in days. */
+function daysUpToCutoff(req: ApprovedRequest, cutoffIso: string, publicHolidays: string[]): number {
+  if (req.startDate > cutoffIso) return 0;
+  if (req.endDate <= cutoffIso) {
+    return calculateRequestDays(req.startDate, req.endDate, req.halfDayStart, req.halfDayEnd, publicHolidays);
+  }
+  return calculateRequestDays(req.startDate, cutoffIso, req.halfDayStart, false, publicHolidays);
+}
+
+export interface YearPosition {
+  /** Carried in from the previous year, before anything lapsed */
+  carryoverIn: number;
+  /** Lapsed at the cutoff; 0 until the cutoff has passed */
+  carryoverLapsed: number;
+  /** Not spent yet and still spendable today */
+  carryoverUnused: number;
+  used: number;
   usedFromCarryover: number;
   usedFromAllowance: number;
+  remaining: number;
   /** Per-request source: "carryover", "allowance", or "mixed" */
   requestSources: Map<number, "carryover" | "allowance" | "mixed">;
 }
 
 /**
- * Calculate how much was used from carryover vs regular allowance.
- * Carryover is consumed first (FIFO).
+ * One year's position. Requests count in the year they start, and carryover is
+ * consumed first, FIFO by start date, but only by days on or before the cutoff.
+ * Carryover already spent stays spent when the cutoff passes: only the unspent
+ * rest lapses.
  */
-export function calculateUsageBreakdown(
-  carryoverDays: number,
-  approvedRequests: (ApprovedRequest & { id: number })[],
-  publicHolidays: string[]
-): UsageBreakdown {
-  let carryoverRemaining = carryoverDays;
+export function calculateYearPosition(input: {
+  year: number;
+  allowance: number;
+  carryoverIn: number;
+  requests: ApprovedRequest[];
+  publicHolidays: string[];
+  policy: CarryoverPolicy;
+  today: string;
+}): YearPosition {
+  const { year, allowance, carryoverIn, requests, publicHolidays, policy, today } = input;
+  const cutoffIso = cutoffDate(year, policy.cutoff);
+
+  let carryoverLeft = carryoverIn;
+  let used = 0;
   let usedFromCarryover = 0;
-  let usedFromAllowance = 0;
   const requestSources = new Map<number, "carryover" | "allowance" | "mixed">();
 
-  // Process requests chronologically (earliest first)
-  const sorted = [...approvedRequests].sort((a, b) => a.startDate.localeCompare(b.startDate));
-
+  const sorted = [...requests].sort((a, b) => a.startDate.localeCompare(b.startDate));
   for (const req of sorted) {
     const days = calculateRequestDays(req.startDate, req.endDate, req.halfDayStart, req.halfDayEnd, publicHolidays);
-    if (days === 0) {
-      requestSources.set(req.id, "allowance");
-      continue;
-    }
+    const eligible = policy.expires ? daysUpToCutoff(req, cutoffIso, publicHolidays) : days;
+    const fromCarryover = Math.min(eligible, carryoverLeft);
 
-    const fromCarryover = Math.min(days, carryoverRemaining);
-    const fromAllowance = days - fromCarryover;
-    carryoverRemaining -= fromCarryover;
+    carryoverLeft -= fromCarryover;
+    used += days;
     usedFromCarryover += fromCarryover;
-    usedFromAllowance += fromAllowance;
 
-    if (fromCarryover > 0 && fromAllowance > 0) {
-      requestSources.set(req.id, "mixed");
-    } else if (fromCarryover > 0) {
-      requestSources.set(req.id, "carryover");
-    } else {
-      requestSources.set(req.id, "allowance");
-    }
+    if (fromCarryover === 0) requestSources.set(req.id, "allowance");
+    else requestSources.set(req.id, fromCarryover < days ? "mixed" : "carryover");
   }
 
-  return { usedFromCarryover, usedFromAllowance, requestSources };
+  const lapsed = policy.expires && today > cutoffIso;
+  const carryoverLapsed = lapsed ? carryoverLeft : 0;
+
+  return {
+    carryoverIn,
+    carryoverLapsed,
+    carryoverUnused: lapsed ? 0 : carryoverLeft,
+    used,
+    usedFromCarryover,
+    usedFromAllowance: used - usedFromCarryover,
+    remaining: allowance + carryoverIn - carryoverLapsed - used,
+    requestSources,
+  };
 }
 
 /**
- * Returns the effective carryover days for a user right now.
- * Returns 0 if carryover is disabled or past the cutoff date.
+ * What carries into a year, derived by walking forward from the opening balance.
+ * An overdrawn year carries 0 rather than a debt.
  */
-export function getEffectiveCarryover(
-  userCarryoverDays: number,
-  carryoverEnabled: boolean,
-  carryoverCutoff: string,
-  today?: Date
-): number {
-  if (!carryoverEnabled || userCarryoverDays <= 0) return 0;
+export function calculateCarryoverIn(input: {
+  year: number;
+  startYear: number;
+  openingCarryover: number;
+  allowance: number;
+  requests: ApprovedRequest[];
+  publicHolidays: string[];
+  policy: CarryoverPolicy;
+}): number {
+  const { year, startYear, openingCarryover, allowance, requests, publicHolidays, policy } = input;
+  if (!policy.enabled || year < startYear) return 0;
 
-  const now = today ?? new Date();
-  const [cutoffMonth, cutoffDay] = carryoverCutoff.split("-").map(Number);
-  const cutoffDate = new Date(now.getFullYear(), cutoffMonth - 1, cutoffDay);
-
-  // Include the cutoff day itself
-  cutoffDate.setDate(cutoffDate.getDate() + 1);
-
-  return now < cutoffDate ? userCarryoverDays : 0;
+  let carryover = openingCarryover;
+  for (let y = startYear; y < year; y++) {
+    const position = calculateYearPosition({
+      year: y,
+      allowance,
+      carryoverIn: carryover,
+      requests: requests.filter((r) => Number(r.startDate.slice(0, 4)) === y),
+      publicHolidays,
+      policy,
+      today: `${y + 1}-12-31`, // a closed year: its cutoff has always passed
+    });
+    carryover = Math.max(0, position.remaining);
+  }
+  return carryover;
 }

@@ -39,7 +39,7 @@ function user(id: string, over: Partial<User> = {}): User {
     slackId: id,
     name: `Person ${id}`,
     annualAllowance: 30,
-    carryoverDays: 3,
+    carryoverDays: 3, carryoverStartYear: 2026,
     language: "de",
     isAdmin: false,
     ...over,
@@ -47,7 +47,7 @@ function user(id: string, over: Partial<User> = {}): User {
 }
 
 const snapshot: BalanceSnapshot = {
-  year: 2026, allowance: 30, carryover: 3, grantedCarryover: 3,
+  year: 2026, allowance: 30, carryover: 3, grantedCarryover: 3, carryoverLapsed: 0, carryoverExpires: true,
   carryoverEnabled: true, carryoverCutoff: "03-31", budget: 33,
   used: 17.5, remaining: 15.5, usedFromCarryover: 3, usedFromAllowance: 14.5,
   carryoverUnused: 0, approved: [], publicHolidays: [], requestSources: new Map(),
@@ -144,7 +144,7 @@ describe("view limits", () => {
       assertValidView(buildAdminPeopleModal(lang, user("U1", { isAdmin: true }), true), `people/${lang}`);
       assertValidView(buildAdminPeopleModal(lang, null, false), `people empty/${lang}`);
       assertValidView(
-        buildAdminSettingsModal(lang, { bundesland: "BE", carryoverEnabled: true, carryoverCutoff: "03-31" }),
+        buildAdminSettingsModal(lang, { bundesland: "BE", carryoverEnabled: true, carryoverExpires: true, carryoverCutoff: "03-31" }),
         `settings/${lang}`
       );
     });
